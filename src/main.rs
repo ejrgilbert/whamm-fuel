@@ -9,6 +9,7 @@ use wirm::ir::id::{FunctionID, GlobalID, TypeID};
 use wirm::ir::module::module_types::Types;
 use wirm::wasmparser::{BlockType, Operator};
 use std::io::Write;
+use std::iter::zip;
 use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
 use wirm::ir::function::FunctionBuilder;
 use wirm::ir::types::{InitExpr, Instructions, Value};
@@ -199,13 +200,23 @@ fn analyze_and_slice(wasm_bytes: &[u8]) -> Result<()> {
 
     // create the slices
     let mut slices = slice(&func_taints);
-
-    // TODO: Calculate costs!
+    save_structure(&mut slices, &func_taints, &wasm);
 
     // generate code for the slices (leave placeholders for the cost calculation)
     let mut gen_wasm = Module::default();
-    let code = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
-    flush_slices(wasm.globals.len(), &slices, &func_taints, &wasm);
+    let (cost_maps, fid_map) = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
+    flush_slices(wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm);
+
+    println!("=====================");
+    println!("==== FID MAPPING ====");
+    println!("=====================");
+    let mut sorted: Vec<&u32> = fid_map.keys().into_iter().collect();
+    sorted.sort();
+    for fid in sorted.iter() {
+        print!("{}{} -> ", tab(1), **fid);
+        print_fid(&format!("{}", fid_map.get(*fid).unwrap()));
+        println!()
+    }
 
     Ok(())
 }
@@ -423,7 +434,7 @@ fn analyze(wasm: &mut Module) -> Vec<FuncState>{
             }
 
             // ---------------- Branch / Control ----------------
-            Operator::BrIf { .. } | Operator::If { .. } => {
+            Operator::BrIf { .. } | Operator::If { .. } | Operator::BrTable { .. } => {
                 // pops condition
                 let cond = state.stack.pop().unwrap();
                 state.instrs.push(InstrInfo {
@@ -637,32 +648,11 @@ fn slice_func(state: &FuncState) -> SliceResult {
     }
 }
 
-
-// =================
-// ==== CODEGEN ====
-// =================
-
-enum CompType {
-    Exact,
-    Approx
-}
-
+// ===================
+// ==== STRUCTURE ====
+// ===================
 #[derive(Default)]
-struct CodeGen {
-    // Maps from dependency index -> generated local ID for each
-    // of the types of program state the slice can depend on.
-    for_params: HashMap<u32, u32>,
-    for_globals: HashMap<u32, u32>,
-    for_loads: HashMap<u32, u32>,
-    for_calls: HashMap<u32, u32>,
-
-    // Used to track the current cost of the basic block
-    // Once we reach a branching opcode, we need to gen the
-    // cost computation before branching!
-    // 1. generate computation
-    // 2. curr_cost = 0
-    curr_cost: u64,
-
+struct IdentifyStructure {
     // Block metadata to help determine if we should keep around the structure
     // IF block contains non-block instructions ==> YES
     // When to set these values?
@@ -677,7 +667,7 @@ struct CodeGen {
     // This depends on param0, so we need to save `if` (included in the slice), `else` and `end` (not included in the slice)
     save_block_for_slice: Vec<bool>
 }
-impl CodeGen {
+impl IdentifyStructure {
     // ----- BLOCKS
     fn in_block(&self) -> bool { !self.nested_blocks.is_empty() }
     fn block_enter(&mut self, instr_idx: usize) {
@@ -704,24 +694,9 @@ impl CodeGen {
         self.block_support_instrs.clear();
         ret
     }
-
-    // ----- COST
-    fn add_cost(&mut self, cost: u64) {
-        self.curr_cost = cost;
-    }
-    fn reset_cost(&mut self) {
-        self.curr_cost = 0;
-    }
 }
 
-fn codegen<'a, 'b>(ty: &CompType, slices: &mut Vec<SliceResult>, funcs: &Vec<FuncState>, wasm: &Module<'a>, gen_wasm: &mut Module<'b>) -> HashMap<u32, u32> where 'a : 'b {
-    let fuel = gen_wasm.add_global(
-        InitExpr::new(vec![InitInstr::Value(Value::I64(INIT_FUEL))]),
-        DataType::I64,
-        true,
-        false
-    );
-    let mut fid_map = HashMap::new();
+fn save_structure(slices: &mut Vec<SliceResult>, funcs: &Vec<FuncState>, wasm: &Module) {
     for (slice, func) in slices.iter_mut().zip(funcs.iter()) {
         let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
         let Some(Types::FuncType { params , results, ..}) = wasm.types.get(lf.ty_id) else {
@@ -730,42 +705,33 @@ fn codegen<'a, 'b>(ty: &CompType, slices: &mut Vec<SliceResult>, funcs: &Vec<Fun
 
         let mut new_func = FunctionBuilder::new(params, results);
         let body = &lf.body.instructions;
-        let mut state = CodeGen::default();     // one instance of state per function!
+        let mut state = IdentifyStructure::default();     // one instance of state per function!
 
         for (i, op) in body.get_ops().iter().enumerate() {
             let in_slice = slice.instrs.contains(&i);
-            let (support_ops, do_fuel_before) = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
+            let support_ops = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
             slice.instrs_support.extend(support_ops);
-
-            if do_fuel_before {
-                // Generate the fuel decrement
-                gen_fuel_comp(&fuel, &ty, &mut state, &mut new_func);
-                state.reset_cost();
-            }
 
             if in_slice {
                 // put this opcode in the generated function
                 new_func.inject(op.clone());
             }
         }
-
-        // add the function to the `gen_wasm` and save the fid mapping
-        let new_fid = new_func.finish_module(gen_wasm);
-        fid_map.insert(func.fid, *new_fid);
-
-        // print the codegen state for this function
     }
-    fid_map
 }
 
 /// Returns: (should_include, do_fuel_before)
 /// - support_opcode: whether this opcode should be included in the generated function.
 /// - do_fuel_before: whether we should compute the fuel implications at this location
 ///                 (before emitting this opcode).
-fn visit_op(op: &Operator, instr_idx: usize, at_func_end: bool, is_in_slice: bool, state: &mut CodeGen) -> (HashSet<usize>, bool) {
-    // compute and increment the cost to calculate for this block
-    state.add_cost(op_cost(op));
-
+fn visit_op(op: &Operator, instr_idx: usize, at_func_end: bool, is_in_slice: bool, state: &mut IdentifyStructure) -> HashSet<usize> {
+    // Test whether we need to save extra support opcodes
+    let is_cf = matches!(op,
+        // branching opcodes
+        Operator::Br {..} | Operator::BrIf{..} | Operator::BrTable{..} | Operator::BrOnCast {..} | Operator::BrOnCastFail {..} |  Operator::BrOnNonNull {..} |  Operator::BrOnNull {..} |
+        // control opcodes
+        Operator::Return
+    );
     let is_block = matches!(op, Operator::If {..} | Operator::Block {..} | Operator::Loop {..});
     let should_include = if is_block {
         // This opcode creates block structure
@@ -793,11 +759,129 @@ fn visit_op(op: &Operator, instr_idx: usize, at_func_end: bool, is_in_slice: boo
         if is_in_slice && state.in_block() {
             state.block_has_instrs = true;
         }
+        if is_cf {
+            // this is some extra control flow that we'll want to
+            // include if we have an included slice in this block
+            state.add_block_support(instr_idx);
+        }
         HashSet::default()
     };
 
     // should only return true for support_opcode if we want to include it, and it's not already in the slice!
-    (if !is_in_slice { should_include } else { HashSet::default() }, false)
+    if !is_in_slice { should_include } else { HashSet::default() }
+}
+
+// =================
+// ==== CODEGEN ====
+// =================
+
+enum CompType {
+    Exact,
+    Approx
+}
+
+#[derive(Default)]
+struct CodeGen {
+    // Maps from dependency index -> generated local ID for each
+    // of the types of program state the slice can depend on.
+    for_params: HashMap<u32, u32>,
+    for_globals: HashMap<u32, u32>,
+    for_loads: HashMap<u32, u32>,
+    for_calls: HashMap<u32, u32>,
+
+    // Used to track the current cost of the basic block
+    // Once we reach a branching opcode, we need to gen the
+    // cost computation before branching!
+    // 1. generate computation
+    // 2. curr_cost = 0
+    curr_cost: u64
+}
+impl CodeGen {
+    // ----- COST
+    fn add_cost(&mut self, cost: u64) {
+        self.curr_cost += cost;
+    }
+    fn reset_cost(&mut self) {
+        self.curr_cost = 0;
+    }
+}
+
+fn codegen<'a, 'b>(ty: &CompType, slices: &mut Vec<SliceResult>, funcs: &Vec<FuncState>, wasm: &Module<'a>, gen_wasm: &mut Module<'b>) -> (Vec<HashMap<usize, u64>>, HashMap<u32, u32>) where 'a : 'b {
+    let fuel = gen_wasm.add_global(
+        InitExpr::new(vec![InitInstr::Value(Value::I64(INIT_FUEL))]),
+        DataType::I64,
+        true,
+        false
+    );
+    let mut fid_map = HashMap::new();
+    // maps from `instr_idx` -> cost of block
+    let mut cost_maps = Vec::new();
+    for (slice, func) in slices.iter_mut().zip(funcs.iter()) {
+        let mut cost_map = HashMap::new();
+        let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
+        let Some(Types::FuncType { params , results, ..}) = wasm.types.get(lf.ty_id) else {
+            panic!("Should have found a function type!");
+        };
+
+        let mut new_func = FunctionBuilder::new(params, results);
+        let body = &lf.body.instructions;
+        let mut state = CodeGen::default();     // one instance of state per function!
+
+        for (i, op) in body.get_ops().iter().enumerate() {
+            let in_slice = slice.instrs.contains(&i);
+            let in_support = slice.instrs_support.contains(&i);
+            let do_fuel_before = calc_op_cost(in_slice | in_support, i == body.len() - 1, op, &mut state);
+
+            if do_fuel_before {
+                // Generate the fuel decrement
+                let cost = state.curr_cost;
+                gen_fuel_comp(&fuel, &ty, &mut state, &mut new_func);
+                state.reset_cost();
+                cost_map.insert(i, cost);
+            }
+
+            if in_slice {
+                // put this opcode in the generated function
+                new_func.inject(op.clone());
+            }
+        }
+
+        // add the function to the `gen_wasm` and save the fid mapping
+        let new_fid = new_func.finish_module(gen_wasm);
+        fid_map.insert(func.fid, *new_fid);
+
+        cost_maps.push(cost_map);
+
+        // print the codegen state for this function
+    }
+    (cost_maps, fid_map)
+}
+
+/// Returns: (should_include, do_fuel_before)
+/// - support_opcode: whether this opcode should be included in the generated function.
+/// - do_fuel_before: whether we should compute the fuel implications at this location
+///                 (before emitting this opcode).
+fn calc_op_cost(is_in_slice: bool, at_func_end: bool, op: &Operator, state: &mut CodeGen) -> bool {
+    // compute and increment the cost to calculate for this block
+    state.add_cost(op_cost(op));
+
+    let is_cf = matches!(op,
+        // branching
+        Operator::Br {..} | Operator::BrIf{..} | Operator::BrTable{..} | Operator::BrOnCast {..} | Operator::BrOnCastFail {..} |  Operator::BrOnNonNull {..} |  Operator::BrOnNull {..} |
+        // block
+        Operator::Else | Operator::End |
+        // control opcodes
+        Operator::Return
+    );
+
+    if (is_cf && is_in_slice) || at_func_end {
+        // If we're at a control flow opcode in the computed slice OR
+        // we're at the end of the function -> we need to insert logic that
+        // decrements the fuel (right before this instr)
+        true
+    } else {
+        false
+    }
 }
 
 fn op_cost(op: &Operator) -> u64 {
@@ -816,21 +900,23 @@ fn gen_fuel_comp(fuel: &GlobalID, ty: &CompType, state: &mut CodeGen, func: &mut
 }
 
 fn gen_fuel_comp_exact(fuel: &GlobalID, state: &mut CodeGen, func: &mut FunctionBuilder) {
-    func.global_get(*fuel);
-    func.i64_const(state.curr_cost as i64);
-    func.i64_sub();
-    func.global_set(*fuel);
+    if state.curr_cost > 0 {
+        func.global_get(*fuel);
+        func.i64_const(state.curr_cost as i64);
+        func.i64_sub();
+        func.global_set(*fuel);
+    }
 }
 
 fn gen_fuel_comp_approx(fuel: &GlobalID, state: &mut CodeGen, func: &mut FunctionBuilder) {
     // TODO
 }
 
-fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, wasm: &Module) {
+fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, cost_maps: &Vec<HashMap<usize, u64>>, wasm: &Module) {
     println!("\n================");
     println!("==== SLICES ====");
     println!("================");
-    for (slice, func) in slices.iter().zip(funcs.iter()) {
+    for (slice, (func, cost_map)) in zip(slices, zip(funcs, cost_maps)) {
         println!("function #{} ({} instructions):", slice.fid, slice.instrs.len());
         let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
         let mut tabs = 0;
@@ -892,11 +978,18 @@ fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncS
         tabs += 1;
         println!("{}the function slice:", tab(tabs));
         tabs += 1;
-        for (i, instr_info) in func.instrs.iter().enumerate() {
+        for i in 0..body.len() {
+            let cost = cost_map.get(&i);
             let in_slice = slice.instrs.contains(&i);
             let in_support = slice.instrs_support.contains(&i);
+
+            if let Some(cost) = cost {
+                let s = format!("{}\t! >>{cost}\n", tab(tabs));
+                print_cost(&s);
+            }
+
             let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
-            let s = format!("{}{}\t{} {:?}\n", tab(tabs), instr_info.idx, mark, body.get_ops().get(i).unwrap());
+            let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
             if in_slice {
                 print_tainted(&s);
             } else if in_support {
@@ -930,6 +1023,22 @@ fn print_support(s: &str) {
     let writer = BufferWriter::stdout(ColorChoice::Always);
     let mut buff = writer.buffer();
     blue(true, s, &mut buff);
+    writer
+        .print(&buff)
+        .expect("Uh oh, something went wrong while printing to terminal");
+}
+fn print_cost(s: &str) {
+    let writer = BufferWriter::stdout(ColorChoice::Always);
+    let mut buff = writer.buffer();
+    red(true, s, &mut buff);
+    writer
+        .print(&buff)
+        .expect("Uh oh, something went wrong while printing to terminal");
+}
+fn print_fid(s: &str) {
+    let writer = BufferWriter::stdout(ColorChoice::Always);
+    let mut buff = writer.buffer();
+    magenta_italics(true, s, &mut buff);
     writer
         .print(&buff)
         .expect("Uh oh, something went wrong while printing to terminal");
