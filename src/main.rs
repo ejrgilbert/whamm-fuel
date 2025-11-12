@@ -1,14 +1,22 @@
+mod utils;
+
 use anyhow::{Result, bail};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use wirm::iterator::iterator_trait::Iterator;
 use wirm::iterator::module_iterator::ModuleIterator;
-use wirm::{Location, Module};
-use wirm::ir::id::{FunctionID, TypeID};
+use wirm::{DataType, InitInstr, Location, Module, Opcode};
+use wirm::ir::id::{FunctionID, GlobalID, TypeID};
 use wirm::ir::module::module_types::Types;
 use wirm::wasmparser::{BlockType, Operator};
 use std::io::Write;
 use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
+use wirm::ir::function::FunctionBuilder;
+use wirm::ir::types::{InitExpr, Instructions, Value};
+use wirm::opcode::Inject;
+use crate::utils::stack_effects;
 
+const INIT_FUEL: i64 = 1000;
+const FUEL_COMPUTATION: CompType = CompType::Exact;
 const SPACE_PER_TAB: usize = 4;
 
 /// Conservative static taint-slicing for WebAssembly.
@@ -47,8 +55,14 @@ enum Origin {
     Load {
         instr_idx: usize
     },
-    /// Call at instruction index
+    /// Direct call at instruction index
     Call {
+        result_idx: usize,
+        instr_idx: usize
+    },
+    /// Indirect call at instruction index
+    CallIndirect {
+        result_idx: usize,
         instr_idx: usize
     },
     /// A constant literal
@@ -56,48 +70,47 @@ enum Origin {
         instr_idx: usize
     },
     /// Unknown / external / untracked
-    Unknown
+    Untracked
 }
 
 /// Lightweight kind of operator we care about for slicing & identification.
 #[derive(Debug, Clone)]
 enum OpKind {
+    // i only care about control opcodes!
     Control,      // br_if, if, br_table, br, select (select we treat specially)
-    Load,         // any memory load
-    Store,        // memory store (we don't treat as sources but stack effects matter)
-    GlobalGet(u32),
-    GlobalSet(u32),
-    LocalGet(u32),
-    LocalSet(u32),
-    LocalTee(u32),
-    Const,
-    Binary,
-    Unary,
-    Call,           // simplified: consumes args, produces result (we won't analyze inside)
-    CallIndirect,   // simplified: consumes args, produces result (we won't analyze inside)
+    // Load,         // any memory load
+    // Store,        // memory store (we don't treat as sources but stack effects matter)
+    // GlobalGet,
+    // GlobalSet,
+    // LocalGet,
+    // LocalSet,
+    // LocalTee,
+    // Const,
+    // Binary,
+    // Unary,
+    // Call,           // simplified: consumes args, produces result (we won't analyze inside)
+    // CallIndirect,   // simplified: consumes args, produces result (we won't analyze inside)
     Other,
 }
 
 /// Record for each instruction we saw.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct InstrInfo {
     idx: usize,
-    operator: String,
     kind: OpKind,
     /// immediate origins used as inputs by this instruction (in order popped)
-    inputs: Vec<Origin>,
-    /// how many values it produced (we don't keep per-output origins here;
-    /// produced origins are always `Origin::Instr(idx)` for each output).
-    produces: usize,
+    inputs: Vec<Origin>
 }
 
 /// Result of the slice analysis.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct SliceResult {
     fid: u32,
     total_params: usize,
     /// all instruction indices that are in the backward slice (influencing control).
     instrs: HashSet<usize>,
+    /// all instruction indices that are included for support purposes (block structure)
+    instrs_support: HashSet<usize>,
     /// function parameter indices that influence control
     params: HashSet<u32>,
     /// global indices (global.get) that influence control
@@ -105,7 +118,26 @@ struct SliceResult {
     /// load instruction indices that influence control
     loads: HashSet<usize>,
     /// call instruction indices that influence control
-    calls: HashSet<usize>,
+    /// AND the actually-used result of that call
+    calls: HashSet<(usize, usize)>,
+    /// call_indirect instruction indices that influence control
+    /// AND the actually-used result of that call
+    call_indirects: HashSet<(usize, usize)>,
+}
+
+struct FuncState {
+    fid: u32,
+    total_params: usize,
+    instrs: Vec<InstrInfo>,         // information about instrs (used to create the slice)
+}
+impl FuncState {
+    fn new(taint_state: FuncTaint) -> Self {
+        Self {
+            fid: taint_state.fid,
+            total_params: taint_state.total_params,
+            instrs: taint_state.instrs
+        }
+    }
 }
 
 #[derive(Default)]
@@ -116,9 +148,6 @@ struct FuncTaint {
     local_origin: Vec<Origin>,
     total_params: usize,
     total_results: usize,
-
-    // To track the program slice we'll build
-    slice_offsets: HashSet<usize>,
 
     // Some tracking metadata
     // operand stack: each element is an Origin indicating where the value came from.
@@ -133,11 +162,12 @@ impl FuncTaint {
         } else {
             panic!("Should have found a function type!");
         };
-        let mut num_locals = total_params;
-        let func = wasm.functions.unwrap_local(fid);
-        for (i, _) in func.body.locals.iter() {
-            num_locals += *i as usize;
-        }
+        // If I need to compute the total number of locals for a function:
+        // let mut num_locals = total_params;
+        // let func = wasm.functions.unwrap_local(fid);
+        // for (i, _) in func.body.locals.iter() {
+        //     num_locals += *i as usize;
+        // }
 
         Self {
             fid: *fid,
@@ -166,15 +196,23 @@ fn analyze_and_slice(wasm_bytes: &[u8]) -> Result<()> {
     let mut wasm = Module::parse(&wasm_bytes, false, true).unwrap();
 
     let func_taints = analyze(&mut wasm);
-    let slices = slice(&func_taints);
-    flush(wasm.globals.len(), &slices, &func_taints);
+
+    // create the slices
+    let mut slices = slice(&func_taints);
+
+    // TODO: Calculate costs!
+
+    // generate code for the slices (leave placeholders for the cost calculation)
+    let mut gen_wasm = Module::default();
+    let code = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
+    flush_slices(wasm.globals.len(), &slices, &func_taints, &wasm);
 
     Ok(())
 }
 
-fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
+fn analyze(wasm: &mut Module) -> Vec<FuncState>{
     let mut mi = ModuleIterator::new(wasm, &vec![]);
-    let mut func_taints: Vec<FuncTaint> = Vec::new();
+    let mut funcs: Vec<FuncState> = Vec::new();
 
     let mut first = true;
     let mut state = FuncTaint::default();
@@ -182,7 +220,7 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
         let (
             Location::Module {func_idx, instr_idx} |
             Location::Component {func_idx, instr_idx, ..},
-            at_func_end
+            ..
         ) = mi.curr_loc();
         println!("Function #{} at instruction offset: {}", *func_idx, instr_idx);
 
@@ -191,7 +229,7 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
             if !first {
                 // only save if this isn't the first function we're visiting
                 assert!(state.stack.len() == state.total_results || state.stack.is_empty(), "still had stack values leftover: {:?}", state.stack);
-                func_taints.push(state);
+                funcs.push(FuncState::new(state));
             }
 
             state = FuncTaint::new(mi.module, func_idx);
@@ -213,10 +251,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(Origin::Const {instr_idx});
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::Const,
-                    inputs: vec![],
-                    produces: 1,
+                    kind: OpKind::Other,
+                    inputs: vec![]
                 });
             }
 
@@ -230,16 +266,14 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                         if *local_index < state.total_params as u32 {
                             Origin::Param {instr_idx, lid: *local_index}
                         } else {
-                            Origin::Unknown
+                            Origin::Untracked
                         }
                     });
                 state.stack.push(origin.clone());
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::LocalGet(*local_index),
+                    kind: OpKind::Other,
                     inputs: vec![], // origin already recorded on stack
-                    produces: 1,
                 });
             }
 
@@ -250,10 +284,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.local_origin[*local_index as usize] = val.clone();
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::LocalSet(*local_index),
+                    kind: OpKind::Other,
                     inputs: vec![val],
-                    produces: 0,
                 });
             }
 
@@ -265,10 +297,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(val.clone());
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::LocalTee(*local_index),
-                    inputs: vec![val],
-                    produces: 1,
+                    kind: OpKind::Other,
+                    inputs: vec![val]
                 });
             }
 
@@ -277,21 +307,17 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(Origin::Global {instr_idx, gid: *global_index});
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::GlobalGet(*global_index),
-                    inputs: vec![],
-                    produces: 1,
+                    kind: OpKind::Other,
+                    inputs: vec![]
                 });
             }
 
-            Operator::GlobalSet { global_index } => {
+            Operator::GlobalSet { .. } => {
                 let val = state.stack.pop().unwrap();
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::GlobalSet(*global_index),
-                    inputs: vec![val],
-                    produces: 0,
+                    kind: OpKind::Other,
+                    inputs: vec![val]
                 });
             }
 
@@ -316,10 +342,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(Origin::Load {instr_idx});
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::Load,
-                    inputs: vec![addr_origin],
-                    produces: 1,
+                    kind: OpKind::Other,
+                    inputs: vec![addr_origin]
                 });
             }
 
@@ -338,10 +362,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 let addr = state.stack.pop().unwrap();
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::Store,
-                    inputs: vec![addr, val],
-                    produces: 0,
+                    kind: OpKind::Other,
+                    inputs: vec![addr, val]
                 });
             }
 
@@ -371,10 +393,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(Origin::Instr {instr_idx});
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::Binary,
-                    inputs: vec![a, b],
-                    produces: 1,
+                    kind: OpKind::Other,
+                    inputs: vec![a, b]
                 });
             }
 
@@ -383,10 +403,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(Origin::Instr {instr_idx});
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::Unary,
-                    inputs: vec![a],
-                    produces: 1,
+                    kind: OpKind::Other,
+                    inputs: vec![a]
                 });
             }
 
@@ -399,10 +417,8 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 state.stack.push(Origin::Instr {instr_idx});
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
                     kind: OpKind::Control, // treat select as control-influencing (it's a conditional)
-                    inputs: vec![val1, val2, cond],
-                    produces: 1,
+                    inputs: vec![val1, val2, cond]
                 });
             }
 
@@ -412,17 +428,20 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 let cond = state.stack.pop().unwrap();
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
                     kind: OpKind::Control,
-                    inputs: vec![cond],
-                    produces: 0,
+                    inputs: vec![cond]
                 });
             }
 
             // ---------------- Calls ----------------
-            // We don't inspect callee internals here; pop nargs (unknown) and push result (if any).
-            Operator::Call { function_index } => {
-                let tid = mi.module.functions.get(FunctionID(*function_index)).get_type_id();
+            Operator::Call {..} | Operator::CallIndirect {..} => {
+                let (tid, kind) = if let Operator::Call { function_index } = op {
+                    (mi.module.functions.get(FunctionID(*function_index)).get_type_id(), OpKind::Other)
+                } else if let Operator::CallIndirect {type_index, ..} = op {
+                    (TypeID(*type_index), OpKind::Other)
+                } else {
+                    unreachable!()
+                };
                 let (pops, pushes) = if let Some(Types::FuncType { params , results, ..}) = mi.module.types.get(tid) {
                     (params.len(), results.len())
                 } else {
@@ -432,20 +451,30 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 // ideally, use type information to know the real parameter count and results
                 let mut inputs = Vec::new();
                 for _ in 0..pops {
-                    inputs.push(state.stack.pop().unwrap());
+                    inputs.insert(0, state.stack.pop().unwrap());
                 }
-                for _ in 0..pushes {
-                    state.stack.push(Origin::Call {instr_idx})
+
+                for i in 0..pushes {
+                    state.stack.push(if let Operator::Call { .. } = op {
+                        Origin::Call {
+                            result_idx: i,
+                            instr_idx
+                        }
+                    } else if let Operator::CallIndirect {..} = op {
+                        Origin::CallIndirect {
+                            result_idx: i,
+                            instr_idx
+                        }
+                    } else {
+                        unreachable!()
+                    })
                 }
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
-                    kind: OpKind::Call,
-                    inputs,
-                    produces: 1,
+                    kind,
+                    inputs
                 });
             }
-            Operator::CallIndirect {..} => todo!(),
 
             Operator::Return {..} => {
                 for _ in 0..state.total_results {
@@ -458,91 +487,48 @@ fn analyze(wasm: &mut Module) -> Vec<FuncTaint>{
                 let (pops, pushes) = stack_effects(op, mi.module);
                 let mut inputs = Vec::new();
                 for _ in 0..pops {
-                    inputs.push(state.stack.pop().unwrap());
+                    inputs.insert(0, state.stack.pop().unwrap());
                 }
 
                 for _ in 0..pushes {
-                    state.stack.push(Origin::Unknown)
+                    state.stack.push(Origin::Untracked)
                 }
                 state.instrs.push(InstrInfo {
                     idx: instr_idx,
-                    operator: format!("{:?}", op),
                     kind: OpKind::Other,
-                    inputs,
-                    produces: 0,
+                    inputs
                 });
             }
         }
     }
     // push the state of the final function
     assert!(state.stack.len() == state.total_results || state.stack.is_empty(), "still had stack values leftover: {:?}", state.stack);
-    func_taints.push(state);
+    funcs.push(FuncState::new(state));
 
-    func_taints
+    funcs
 }
 
-// Determine pops/pushes for instruction
-// returns (pops, pushes)
-fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
-    // TODO -- work with all operators!
-    return match op {
-        Operator::If { blockty, .. } => {
-            block_effects(1, &blockty, wasm)
-        },
-        Operator::Block {blockty, ..} => {
-            block_effects(0, &blockty, wasm)
-        },
-        Operator::BrIf { .. } |
-        Operator::BrTable { .. } => (1, 0),
-        Operator::Call { function_index } => {
-            let tid = wasm.functions.get(FunctionID(*function_index)).get_type_id();
-            ty_effects(0, *tid, wasm)
-        }
-        Operator::CallIndirect { type_index, .. } => ty_effects(1, *type_index, wasm),
-        Operator::LocalGet { .. } => (0, 1),
-        Operator::LocalSet { .. } => (1, 0),
-        Operator::LocalTee { .. } => (1, 1),
-        Operator::GlobalGet { .. } => (0, 1),
-        Operator::GlobalSet { .. } => (1, 0),
-        Operator::I32Const { .. } | Operator::I64Const { .. } | Operator::F32Const { .. } | Operator::F64Const { .. } => (0,1),
-        Operator::I32Load { .. } | Operator::I64Load { .. } | Operator::F32Load { .. } | Operator::F64Load { .. } => (1,1),
-        Operator::I32Store { .. } | Operator::I64Store { .. } | Operator::F32Store { .. } | Operator::F64Store { .. } => (2,0),
-        Operator::Drop { .. } => (1, 0),
-        _ => (0,0),
-    };
+// ===============
+// ==== SLICE ====
+// ===============
 
-    fn block_effects(extra_pop: usize, blockty: &BlockType, wasm: &Module) -> (usize, usize) {
-        match blockty {
-            BlockType::Empty => (extra_pop, 0),
-            BlockType::Type(_) => (extra_pop, 1),
-            BlockType::FuncType(tid) => ty_effects(extra_pop, *tid, wasm),
-        }
-    }
-    fn ty_effects(extra_pop: usize, tid: u32, wasm: &Module) -> (usize, usize) {
-        if let Some(Types::FuncType { params , results, ..}) = wasm.types.get(TypeID(tid)) {
-            (params.len() + extra_pop, results.len())
-        } else {
-            panic!("Should have found a function type!");
-        }
-    }
-}
-
-fn slice(func_taints: &Vec<FuncTaint>) -> Vec<SliceResult> {
+fn slice(func_taints: &Vec<FuncState>) -> Vec<SliceResult> {
     let mut slices = Vec::new();
-    for (i, taint) in func_taints.iter().enumerate() {
+    for taint in func_taints.iter() {
         slices.push(slice_func(taint));
     }
     slices
 }
 
-fn slice_func(state: &FuncTaint) -> SliceResult {
+fn slice_func(state: &FuncState) -> SliceResult {
     // Start from control instructions' inputs
     let mut worklist: VecDeque<Origin> = VecDeque::new();
     let mut included_instrs: HashSet<usize> = HashSet::new();
     let mut included_params: HashSet<u32> = HashSet::new();
     let mut included_globals: HashSet<u32> = HashSet::new();
     let mut included_loads: HashSet<usize> = HashSet::new();
-    let mut included_calls: HashSet<usize> = HashSet::new();
+    let mut included_calls: HashSet<(usize, usize)> = HashSet::new(); // the call_idx AND the result_idx used
+    let mut included_call_indirects: HashSet<(usize, usize)> = HashSet::new();
 
     for (i, info) in state.instrs.iter().enumerate() {
         if let OpKind::Control = info.kind {
@@ -586,9 +572,25 @@ fn slice_func(state: &FuncTaint) -> SliceResult {
                 included_instrs.insert(instr_idx);
             }
 
-            Origin::Call {instr_idx} => {
+            Origin::Call {instr_idx, result_idx} => {
                 // Mark the call itself as influencing control
-                if !included_calls.insert(instr_idx) {
+                if !included_calls.insert((instr_idx, result_idx)) {
+                    continue;
+                }
+                // I don't care about the call's origins!
+                // A call may have inputs (address origins) — include them too
+                // if let Some(info) = state.instrs.get(instr_idx) {
+                //     for inp in &info.inputs {
+                //         worklist.push_back(inp.clone());
+                //     }
+                // }
+                // also include the call instruction index in the instr set
+                included_instrs.insert(instr_idx);
+            }
+
+            Origin::CallIndirect {instr_idx, result_idx} => {
+                // Mark the call itself as influencing control
+                if !included_call_indirects.insert((instr_idx, result_idx)) {
                     continue;
                 }
                 // I don't care about the call's origins!
@@ -619,9 +621,7 @@ fn slice_func(state: &FuncTaint) -> SliceResult {
                 included_instrs.insert(instr_idx);
             }
 
-            Origin::Unknown => {
-                // nothing to trace further
-            }
+            Origin::Untracked => {}
         }
     }
 
@@ -632,21 +632,213 @@ fn slice_func(state: &FuncTaint) -> SliceResult {
         params: included_params,
         globals: included_globals,
         loads: included_loads,
-        calls: included_calls
+        calls: included_calls,
+        ..Default::default()
     }
 }
 
-fn flush(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncTaint>) {
-    println!("\n===================");
-    println!("==== FUNCTIONS ====");
-    println!("===================");
+
+// =================
+// ==== CODEGEN ====
+// =================
+
+enum CompType {
+    Exact,
+    Approx
+}
+
+#[derive(Default)]
+struct CodeGen {
+    // Maps from dependency index -> generated local ID for each
+    // of the types of program state the slice can depend on.
+    for_params: HashMap<u32, u32>,
+    for_globals: HashMap<u32, u32>,
+    for_loads: HashMap<u32, u32>,
+    for_calls: HashMap<u32, u32>,
+
+    // Used to track the current cost of the basic block
+    // Once we reach a branching opcode, we need to gen the
+    // cost computation before branching!
+    // 1. generate computation
+    // 2. curr_cost = 0
+    curr_cost: u64,
+
+    // Block metadata to help determine if we should keep around the structure
+    // IF block contains non-block instructions ==> YES
+    // When to set these values?
+    // ENTER block --> increment block_depth
+    // EXIT block --> decrement block_depth; if block_depth == 0? block_has_instrs = false
+    // KEEP op --> if block_depth > 0? block_has_instrs = true
+    nested_blocks: Vec<usize>, // indices of the blocks we have seen thus far
+    block_support_instrs: HashSet<usize>,
+    block_has_instrs: bool,
+    // whether we need to save the inner-most block for the sake of the slice
+    // consider: local.get 0; if {..} else {..}
+    // This depends on param0, so we need to save `if` (included in the slice), `else` and `end` (not included in the slice)
+    save_block_for_slice: Vec<bool>
+}
+impl CodeGen {
+    // ----- BLOCKS
+    fn in_block(&self) -> bool { !self.nested_blocks.is_empty() }
+    fn block_enter(&mut self, instr_idx: usize) {
+        self.nested_blocks.push(instr_idx);
+        self.save_block_for_slice.push(false);
+    }
+    fn block_exit(&mut self) -> (Option<usize>, Option<bool>) {
+        let block_idx = self.nested_blocks.pop();
+        let should_save = self.save_block_for_slice.pop();
+        if self.nested_blocks.is_empty() {
+            self.block_has_instrs = false;
+        }
+        (block_idx, should_save)
+    }
+    fn save_block_for_slice(&mut self) {
+        let to_save = self.save_block_for_slice.last_mut().unwrap_or_else(|| { unreachable!()});
+        *to_save = true;
+    }
+    fn add_block_support(&mut self, instr_idx: usize) {
+        self.block_support_instrs.insert(instr_idx);
+    }
+    fn use_block_support(&mut self) -> HashSet<usize> {
+        let ret = self.block_support_instrs.to_owned();
+        self.block_support_instrs.clear();
+        ret
+    }
+
+    // ----- COST
+    fn add_cost(&mut self, cost: u64) {
+        self.curr_cost = cost;
+    }
+    fn reset_cost(&mut self) {
+        self.curr_cost = 0;
+    }
+}
+
+fn codegen<'a, 'b>(ty: &CompType, slices: &mut Vec<SliceResult>, funcs: &Vec<FuncState>, wasm: &Module<'a>, gen_wasm: &mut Module<'b>) -> HashMap<u32, u32> where 'a : 'b {
+    let fuel = gen_wasm.add_global(
+        InitExpr::new(vec![InitInstr::Value(Value::I64(INIT_FUEL))]),
+        DataType::I64,
+        true,
+        false
+    );
+    let mut fid_map = HashMap::new();
+    for (slice, func) in slices.iter_mut().zip(funcs.iter()) {
+        let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
+        let Some(Types::FuncType { params , results, ..}) = wasm.types.get(lf.ty_id) else {
+            panic!("Should have found a function type!");
+        };
+
+        let mut new_func = FunctionBuilder::new(params, results);
+        let body = &lf.body.instructions;
+        let mut state = CodeGen::default();     // one instance of state per function!
+
+        for (i, op) in body.get_ops().iter().enumerate() {
+            let in_slice = slice.instrs.contains(&i);
+            let (support_ops, do_fuel_before) = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
+            slice.instrs_support.extend(support_ops);
+
+            if do_fuel_before {
+                // Generate the fuel decrement
+                gen_fuel_comp(&fuel, &ty, &mut state, &mut new_func);
+                state.reset_cost();
+            }
+
+            if in_slice {
+                // put this opcode in the generated function
+                new_func.inject(op.clone());
+            }
+        }
+
+        // add the function to the `gen_wasm` and save the fid mapping
+        let new_fid = new_func.finish_module(gen_wasm);
+        fid_map.insert(func.fid, *new_fid);
+
+        // print the codegen state for this function
+    }
+    fid_map
+}
+
+/// Returns: (should_include, do_fuel_before)
+/// - support_opcode: whether this opcode should be included in the generated function.
+/// - do_fuel_before: whether we should compute the fuel implications at this location
+///                 (before emitting this opcode).
+fn visit_op(op: &Operator, instr_idx: usize, at_func_end: bool, is_in_slice: bool, state: &mut CodeGen) -> (HashSet<usize>, bool) {
+    // compute and increment the cost to calculate for this block
+    state.add_cost(op_cost(op));
+
+    let is_block = matches!(op, Operator::If {..} | Operator::Block {..} | Operator::Loop {..});
+    let should_include = if is_block {
+        // This opcode creates block structure
+        state.block_enter(instr_idx);
+        if is_in_slice { state.save_block_for_slice(); }
+        HashSet::default()
+    } else if matches!(op, Operator::End) {
+        state.add_block_support(instr_idx);
+        let block_has_instrs = state.block_has_instrs;
+        let (block_idx, should_save) = if !at_func_end { state.block_exit() } else { (None, None) };
+        if block_has_instrs || should_save.unwrap_or_default() {
+            let mut res = state.use_block_support();
+            if let Some(block_idx) = block_idx {
+                res.insert(block_idx);
+            }
+            // we want to also include all the support ops we've already collected
+            res
+        } else {
+            HashSet::default()
+        }
+    } else if matches!(op, Operator::Else) {
+        state.add_block_support(instr_idx);
+        HashSet::default()
+    } else {
+        if is_in_slice && state.in_block() {
+            state.block_has_instrs = true;
+        }
+        HashSet::default()
+    };
+
+    // should only return true for support_opcode if we want to include it, and it's not already in the slice!
+    (if !is_in_slice { should_include } else { HashSet::default() }, false)
+}
+
+fn op_cost(op: &Operator) -> u64 {
+    // TODO: assumes 1 for now
+    // match op {
+    //
+    // }
+    1
+}
+
+fn gen_fuel_comp(fuel: &GlobalID, ty: &CompType, state: &mut CodeGen, func: &mut FunctionBuilder) {
+    match ty {
+        CompType::Exact => gen_fuel_comp_exact(fuel, state, func),
+        CompType::Approx => gen_fuel_comp_approx(fuel, state, func),
+    }
+}
+
+fn gen_fuel_comp_exact(fuel: &GlobalID, state: &mut CodeGen, func: &mut FunctionBuilder) {
+    func.global_get(*fuel);
+    func.i64_const(state.curr_cost as i64);
+    func.i64_sub();
+    func.global_set(*fuel);
+}
+
+fn gen_fuel_comp_approx(fuel: &GlobalID, state: &mut CodeGen, func: &mut FunctionBuilder) {
+    // TODO
+}
+
+fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, wasm: &Module) {
+    println!("\n================");
+    println!("==== SLICES ====");
+    println!("================");
     for (slice, func) in slices.iter().zip(funcs.iter()) {
         println!("function #{} ({} instructions):", slice.fid, slice.instrs.len());
+        let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
         let mut tabs = 0;
         print_state_taint(&slice.params, slice.total_params, "params", &mut tabs);
         print_state_taint(&slice.globals, num_globals, "global", &mut tabs);
         print_instr_taint(&slice.loads, "load", &mut tabs);
-        print_instr_taint(&slice.calls, "calls", &mut tabs);
+        print_call_taint(&slice.calls, "calls", &mut tabs);
+        print_call_taint(&slice.call_indirects, "call_indirects", &mut tabs);
         fn print_state_taint(taint: &HashSet<u32>, out_of: usize, ty: &str, tabs: &mut i32) {
             *tabs += 1;
             if !taint.is_empty() {
@@ -681,15 +873,34 @@ fn flush(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncTaint>) 
             }
             *tabs -= 1;
         }
+        fn print_call_taint(calls: &HashSet<(usize, usize)>, ty: &str, tabs: &mut i32) {
+            *tabs += 1;
+            if !calls.is_empty() {
+                println!("{}the {ty} instrs influencing CF:", tab(*tabs));
+                print!("{}", tab(*tabs));
+
+                let mut sorted: Vec<&(usize, usize)> = calls.into_iter().collect();
+                sorted.sort();
+                for (instr, res) in sorted.iter() {
+                    print_tainted(&format!("*(@{}, res{}), ", *instr, *res));
+                }
+                println!();
+            }
+            *tabs -= 1;
+        }
 
         tabs += 1;
         println!("{}the function slice:", tab(tabs));
         tabs += 1;
         for (i, instr_info) in func.instrs.iter().enumerate() {
             let in_slice = slice.instrs.contains(&i);
-            let s = format!("{}{}\t{} {}\n", tab(tabs), instr_info.idx, if in_slice { "*" } else { " " }, instr_info.operator);
+            let in_support = slice.instrs_support.contains(&i);
+            let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
+            let s = format!("{}{}\t{} {:?}\n", tab(tabs), instr_info.idx, mark, body.get_ops().get(i).unwrap());
             if in_slice {
                 print_tainted(&s);
+            } else if in_support {
+                print_support(&s);
             } else {
                 print!("{s}");
             }
@@ -700,6 +911,13 @@ fn flush(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncTaint>) 
     }
 }
 
+
+// ===========================
+// = Terminal Printing Logic =
+// ===========================
+
+const WRITE_ERR: &str = "Uh oh, something went wrong while printing to terminal";
+
 fn print_tainted(s: &str) {
     let writer = BufferWriter::stdout(ColorChoice::Always);
     let mut buff = writer.buffer();
@@ -708,12 +926,14 @@ fn print_tainted(s: &str) {
         .print(&buff)
         .expect("Uh oh, something went wrong while printing to terminal");
 }
-
-// ===========================
-// = Terminal Printing Logic =
-// ===========================
-
-const WRITE_ERR: &str = "Uh oh, something went wrong while printing to terminal";
+fn print_support(s: &str) {
+    let writer = BufferWriter::stdout(ColorChoice::Always);
+    let mut buff = writer.buffer();
+    blue(true, s, &mut buff);
+    writer
+        .print(&buff)
+        .expect("Uh oh, something went wrong while printing to terminal");
+}
 
 pub fn color(s: &str, buffer: &mut Buffer, bold: bool, italics: bool, c: Color) {
     buffer
