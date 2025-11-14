@@ -81,7 +81,6 @@ pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
         Operator::I64Store32 { .. } => (1, 0),
         Operator::MemorySize { .. } => (0, 1),
         Operator::MemoryGrow { .. } => (1, 1),
-        Operator::I32Eqz |
         Operator::I32Eq |
         Operator::I32Ne |
         Operator::I32LtS |
@@ -92,7 +91,6 @@ pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
         Operator::I32LeU |
         Operator::I32GeS |
         Operator::I32GeU |
-        Operator::I64Eqz |
         Operator::I64Eq |
         Operator::I64Ne |
         Operator::I64LtS |
@@ -115,6 +113,8 @@ pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
         Operator::F64Gt |
         Operator::F64Le |
         Operator::F64Ge => (2, 1),
+        Operator::I32Eqz |
+        Operator::I64Eqz |
         Operator::I32Clz |
         Operator::I32Ctz |
         Operator::I32Popcnt => (1, 1),

@@ -135,11 +135,6 @@ fn slice_func(state: &FuncState) -> SliceResult {
                 included_instrs.insert(instr_idx);
             }
 
-            Origin::Const{instr_idx} => {
-                // also include the instruction index in the instr set
-                included_instrs.insert(instr_idx);
-            }
-
             Origin::Untracked => {}
         }
     }

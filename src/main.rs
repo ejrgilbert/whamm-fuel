@@ -34,6 +34,10 @@ const SPACE_PER_TAB: usize = 4;
 ///
 /// Note: This is conservative and intra-procedural by default. Memory is modeled coarsely:
 /// once we see a store of a tainted value, we mark memory as tainted globally; loads are considered tainted if memory is tainted.
+///
+/// Things to configure per domain:
+/// - The amount of initial fuel allotted to computation (configured with INIT_FUEL)
+/// - The fuel cost per opcode (see codegen::op_cost function)
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
@@ -59,28 +63,29 @@ fn do_analysis(wasm_bytes: &[u8]) -> Result<()> {
     // generate code for the slices (leave placeholders for the cost calculation)
     let mut gen_wasm = Module::default();
     let (cost_maps, fid_map) = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
+
+    // Flush state
     flush_slices(wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm);
+    flush_fid_mapping(&fid_map);
 
-    println!("=====================");
-    println!("==== FID MAPPING ====");
-    println!("=====================");
-    let mut sorted: Vec<&u32> = fid_map.keys().collect();
-    sorted.sort();
-    for fid in sorted.iter() {
-        print!("{}{} -> ", tab(1), **fid);
-        print_fid(&format!("{}", fid_map.get(*fid).unwrap()));
-        println!()
-    }
+    // Write the generated wasm to the output file
+    write_bytes(&gen_wasm.encode())
+}
 
-    let bytes  = gen_wasm.encode();
+fn write_bytes(bytes: &[u8]) -> Result<()> {
+    println!("\n====================");
+    println!("==== FLUSH WASM ====");
+    println!("====================");
+
     try_path(&OUTPUT.to_string());
     if let Err(e) = std::fs::write(OUTPUT, bytes) {
         unreachable!(
             "Failed to dump instrumented wasm to {} from error: {}",
             &OUTPUT.to_string(), e
         )
+    } else {
+        println!("Wrote generated Wasm to {}", OUTPUT);
     }
-
     Ok(())
 }
 
@@ -93,6 +98,19 @@ pub(crate) fn try_path(path: &String) {
 // ===========================
 // = Terminal Printing Logic =
 // ===========================
+
+fn flush_fid_mapping(fid_map: &HashMap<u32, u32>) {
+    println!("=====================");
+    println!("==== FID MAPPING ====");
+    println!("=====================");
+    let mut sorted: Vec<&u32> = fid_map.keys().collect();
+    sorted.sort();
+    for fid in sorted.iter() {
+        print!("{fid} -> ");
+        print_fid(&format!("{}", fid_map.get(*fid).unwrap()));
+        println!()
+    }
+}
 
 fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, cost_maps: &Vec<HashMap<usize, u64>>, wasm: &Module) {
     println!("\n================");
