@@ -12,7 +12,7 @@ pub fn is_branching_op(op: &Operator) -> bool {
 
 // Determine pops/pushes for instruction
 // returns (pops, pushes)
-pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
+pub fn stack_effects(op: &Operator, func_tid: &TypeID, wasm: &Module) -> (usize, usize) {
     // TODO -- work with all operators!
     return match op {
         Operator::If { blockty, .. } => {
@@ -62,7 +62,7 @@ pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
         Operator::Else => (0,0),
         Operator::End => (0,0),
         Operator::Br { .. } => (0,0),
-        Operator::Return => (0,0),
+        Operator::Return => unreachable!(),
         Operator::Select => (3, 1),
         Operator::I32Load8S { .. } |
         Operator::I32Load8U { .. } |

@@ -164,6 +164,7 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
             state = FuncTaint::new(mi.module, func_idx);
             first = false;
         }
+        let func_tid = mi.module.functions.get(FunctionID(*func_idx)).get_type_id();
 
         let op = mi.curr_op().unwrap_or_else(|| {
             panic!("Unable to get current operator");
@@ -306,11 +307,26 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
                 for _ in 0..state.total_results {
                     state.stack.pop();
                 }
+                state.instrs.push(InstrInfo {
+                    kind: OpKind::Control,
+                    inputs: vec![]
+                });
             }
+
+            Operator::Block {blockty} | Operator::Loop { blockty } => {
+                // I need to do something special here i think (right now push/pop is done based on blockty and that's wrong)
+                todo!()
+            }
+
+            Operator::End => {
+                // Need to do something based on the matching blockty
+                // don't remember the semantics...something about popping the right amount based on the results?
+                todo!()
+            },
 
             // ---------------- Others ----------------
             _ => {
-                let (pops, pushes) = stack_effects(op, mi.module);
+                let (pops, pushes) = stack_effects(op, &func_tid, mi.module);
                 let mut inputs = Vec::new();
                 for i in 0..pops {
                     inputs.insert(0, state.stack.pop().unwrap_or_else( || {
