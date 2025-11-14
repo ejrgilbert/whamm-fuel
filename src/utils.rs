@@ -3,6 +3,13 @@ use wirm::ir::module::module_types::Types;
 use wirm::Module;
 use wirm::wasmparser::{BlockType, Operator};
 
+
+pub fn is_branching_op(op: &Operator) -> bool {
+    matches!(op, Operator::Br {..} | Operator::BrIf{..} | Operator::BrTable{..} |
+                 Operator::BrOnCast {..} | Operator::BrOnCastFail {..} |  Operator::BrOnNonNull {..} |
+                 Operator::BrOnNull {..})
+}
+
 // Determine pops/pushes for instruction
 // returns (pops, pushes)
 pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
@@ -13,14 +20,14 @@ pub fn stack_effects(op: &Operator, wasm: &Module) -> (usize, usize) {
             // and really...it doesn't actually add anything to the stack. It can just
             // pop values and return what's already on the stack...
             // TODO -- look up semantics and handle this properly!!
-            block_effects(1, &blockty, wasm)
+            block_effects(1, blockty, wasm)
         },
         Operator::Block {blockty, ..} => {
             // TODO -- the block effects don't come into play until this block's END!
             // and really...it doesn't actually add anything to the stack. It can just
             // pop values and return what's already on the stack...
             // TODO -- look up semantics and handle this properly!!
-            block_effects(0, &blockty, wasm)
+            block_effects(0, blockty, wasm)
         },
         Operator::BrIf { .. } |
         Operator::BrTable { .. } => (1, 0),
