@@ -239,6 +239,9 @@ fn visit_op(op: &Operator, instr_idx: usize, at_func_end: bool, is_in_slice: boo
         state.block_enter(instr_idx);
         if is_in_slice { state.save_block_for_slice(); }
         HashSet::default()
+    } else if matches!(op, Operator::Else) {
+        state.add_block_support(instr_idx);
+        HashSet::default()
     } else if matches!(op, Operator::End) {
         state.add_block_support(instr_idx);
         let block_has_instrs = state.block_has_instrs;
@@ -253,9 +256,6 @@ fn visit_op(op: &Operator, instr_idx: usize, at_func_end: bool, is_in_slice: boo
         } else {
             HashSet::default()
         }
-    } else if matches!(op, Operator::Else) {
-        state.add_block_support(instr_idx);
-        HashSet::default()
     } else {
         if is_in_slice && state.in_block() {
             state.block_has_instrs = true;

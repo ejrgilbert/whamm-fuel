@@ -41,23 +41,10 @@ pub enum Origin {
     Untracked
 }
 
-/// Lightweight kind of operator we care about for slicing & identification.
+/// Operator we care about for slicing & identification.
 #[derive(Debug, Clone)]
 pub enum OpKind {
-    // i only care about control opcodes!
     Control,      // br_if, if, br_table, br, select (select we treat specially)
-    // Load,         // any memory load
-    // Store,        // memory store (we don't treat as sources but stack effects matter)
-    // GlobalGet,
-    // GlobalSet,
-    // LocalGet,
-    // LocalSet,
-    // LocalTee,
-    // Const,
-    // Binary,
-    // Unary,
-    // Call,           // simplified: consumes args, produces result (we won't analyze inside)
-    // CallIndirect,   // simplified: consumes args, produces result (we won't analyze inside)
     Other,
 }
 
@@ -95,8 +82,9 @@ struct FuncTaint {
 
     // Some tracking metadata
     // operand stack: each element is an Origin indicating where the value came from.
-    stack: Vec<Origin>,             // current stack
-    instrs: Vec<InstrInfo>,         // information about instrs (used to create the slice)
+    stack: Vec<Origin>,                 // current stack
+    control_stack: Vec<(usize, usize)>, // (orig_stack_size, num_results): used to remember stack state for nested blocks
+    instrs: Vec<InstrInfo>,             // information about instrs (used to create the slice)
 }
 impl FuncTaint {
     fn new(wasm: &Module, fid: FunctionID) -> FuncTaint {
@@ -106,12 +94,6 @@ impl FuncTaint {
         } else {
             panic!("Should have found a function type!");
         };
-        // If I need to compute the total number of locals for a function:
-        // let mut num_locals = total_params;
-        // let func = wasm.functions.unwrap_local(fid);
-        // for (i, _) in func.body.locals.iter() {
-        //     num_locals += *i as usize;
-        // }
 
         Self {
             fid: *fid,
@@ -138,6 +120,27 @@ impl FuncTaint {
     fn set_local_origin(&mut self, i: u32, origins: Origin) {
         self.local_origin[i as usize] = origins;
     }
+
+    fn push_control(&mut self, num_results: usize) {
+        self.control_stack.push((self.stack.len(), num_results));
+    }
+
+    fn pop_control(&mut self) -> (usize, usize) {
+        let (orig_stack_height, num_results) = self.control_stack.pop().unwrap();
+        let res_stack_height = orig_stack_height + num_results;
+        let curr_stack_height = self.stack.len();
+
+        if curr_stack_height < res_stack_height {
+            panic!("Something went horribly wrong in the analysis OR your Wasm module is invalid!");
+        }
+
+        let num_pops = curr_stack_height - res_stack_height;
+        for _ in 0..num_pops {
+            self.stack.pop();
+        }
+
+        (orig_stack_height, num_results)
+    }
 }
 
 pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
@@ -150,7 +153,7 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
         let (
             Location::Module {func_idx, instr_idx} |
             Location::Component {func_idx, instr_idx, ..},
-            ..
+            is_func_end
         ) = mi.curr_loc();
 
         if instr_idx == 0 {
@@ -164,7 +167,7 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
             state = FuncTaint::new(mi.module, func_idx);
             first = false;
         }
-        let func_tid = mi.module.functions.get(FunctionID(*func_idx)).get_type_id();
+        // let func_tid = mi.module.functions.get(FunctionID(*func_idx)).get_type_id();
 
         let op = mi.curr_op().unwrap_or_else(|| {
             panic!("Unable to get current operator");
@@ -251,8 +254,7 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
             // ---------------- Branch / Control ----------------
             Operator::BrIf { .. } | Operator::BrTable { .. }
             | Operator::BrOnNull {..} | Operator::BrOnNonNull {..}
-            | Operator::BrOnCast {..} | Operator::BrOnCastFail {..}
-            | Operator::If { .. }=> {
+            | Operator::BrOnCast {..} | Operator::BrOnCastFail {..} => {
                 // pops condition
                 let cond = state.stack.pop().unwrap();
                 state.instrs.push(InstrInfo {
@@ -313,20 +315,30 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
                 });
             }
 
-            Operator::Block {blockty} | Operator::Loop { blockty } => {
-                // I need to do something special here i think (right now push/pop is done based on blockty and that's wrong)
-                todo!()
+            Operator::If { .. } | Operator::Block { .. } | Operator::Loop { .. } => {
+                if matches!(op, Operator::If { .. }) {
+                    // pops condition
+                    let cond = state.stack.pop().unwrap();
+                    state.instrs.push(InstrInfo {
+                        kind: OpKind::Control,
+                        inputs: vec![cond]
+                    });
+                }
+                let (_, num_results) = stack_effects(op, mi.module);
+                state.push_control(num_results);
             }
 
             Operator::End => {
-                // Need to do something based on the matching blockty
-                // don't remember the semantics...something about popping the right amount based on the results?
-                todo!()
+                // We reach an end if we're exiting a control block!
+                // need to pop the appropriate values off the stack
+                if !is_func_end {
+                    state.pop_control();
+                }
             },
 
             // ---------------- Others ----------------
             _ => {
-                let (pops, pushes) = stack_effects(op, &func_tid, mi.module);
+                let (pops, pushes) = stack_effects(op, mi.module);
                 let mut inputs = Vec::new();
                 for i in 0..pops {
                     inputs.insert(0, state.stack.pop().unwrap_or_else( || {
