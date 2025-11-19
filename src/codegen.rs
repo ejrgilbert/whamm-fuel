@@ -209,7 +209,7 @@ fn gen_fuel_comp_exact(fuel: &GlobalID, state: &mut CodeGen, func: &mut Function
     }
 }
 
-fn gen_fuel_comp_approx(fuel: &GlobalID, state: &mut CodeGen, func: &mut FunctionBuilder) {
+fn gen_fuel_comp_approx(_fuel: &GlobalID, _state: &mut CodeGen, _func: &mut FunctionBuilder) {
     // TODO
     todo!()
 }

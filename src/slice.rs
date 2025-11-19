@@ -122,7 +122,7 @@ fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> Sli
                         let Some(Types::FuncType { results, ..}) = wasm.types.get(wasm.functions.get_type_id(FunctionID(*function_index))) else {
                             panic!("Should have found a function type!");
                         };
-                        results.get(result_idx).unwrap().clone()
+                        *results.get(result_idx).unwrap()
                     },
                     op => panic!("Call opcode not supported: {op:?}")
                 };
@@ -141,7 +141,7 @@ fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> Sli
                         let Some(Types::FuncType { results, ..}) = wasm.types.get(TypeID(*type_index)) else {
                             panic!("Should have found a function type!");
                         };
-                        results.get(result_idx).unwrap().clone()
+                        *results.get(result_idx).unwrap()
                     },
                     op => panic!("CallIndirect opcode not supported: {op:?}")
                 };
@@ -166,7 +166,7 @@ fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> Sli
             }
 
             Origin::Param{lid, instr_idx} => {
-                let param_ty = func_params.get(lid as usize).unwrap().clone();
+                let param_ty = *func_params.get(lid as usize).unwrap();
                 included_params.insert(lid, param_ty);
                 // also include the instruction index in the instr set
                 included_instrs.insert(instr_idx);
@@ -203,7 +203,7 @@ struct IdentifyStructure {
     nested_blocks: Vec<usize>, // indices of the blocks we have seen thus far
     block_support_instrs: HashSet<usize>,
     block_has_instrs: bool,
-    // whether we need to save the inner-most block for the sake of the slice
+    // whether we need to save the innermost block for the sake of the slice
     // consider: local.get 0; if {..} else {..}
     // This depends on param0, so we need to save `if` (included in the slice), `else` and `end` (not included in the slice)
     save_block_for_slice: Vec<bool>

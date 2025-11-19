@@ -120,11 +120,11 @@ fn flush_fid_mapping(fid_map: &HashMap<u32, GeneratedFunc>) {
         print_fid(&format!("{}", new_fid));
 
         tabs += 1;
-        print_params_for_state_req(tabs, "PARAMS", &for_params);
-        print_params_for_state_req(tabs, "GLOBALS", &for_globals);
-        print_params_for_state_req(tabs, "LOADS", &for_loads);
-        print_call_params_for_state_req(tabs, "CALLS", &for_calls);
-        print_call_params_for_state_req(tabs, "CALL_INDIRECTS", &for_call_indirects);
+        print_params_for_state_req(tabs, "PARAMS", for_params);
+        print_params_for_state_req(tabs, "GLOBALS", for_globals);
+        print_params_for_state_req(tabs, "LOADS", for_loads);
+        print_call_params_for_state_req(tabs, "CALLS", for_calls);
+        print_call_params_for_state_req(tabs, "CALL_INDIRECTS", for_call_indirects);
 
         println!();
     }
