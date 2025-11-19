@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use wirm::ir::types::{InitExpr, Value};
 use wirm::{DataType, InitInstr, Module, Opcode};
@@ -7,13 +8,24 @@ use wirm::ir::id::{FunctionID, GlobalID, LocalID};
 use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
 use crate::analyze::FuncState;
-use crate::INIT_FUEL;
 use crate::slice::SliceResult;
-use crate::utils::is_branching_op;
+use crate::utils::{is_branching_op, INIT_FUEL};
 
 pub enum CompType {
     Exact,
     Approx
+}
+impl Display for CompType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                CompType::Exact => "exact",
+                CompType::Approx => "approx"
+            }
+        )
+    }
 }
 
 pub struct CodeGenResult {
@@ -119,6 +131,11 @@ pub fn codegen<'a, 'b>(ty: &CompType, slices: &mut [SliceResult], funcs: &[FuncS
         true,
         false
     );
+    gen_wasm.exports.add_export_global(
+        "FUEL".to_string(),
+        *fuel
+    );
+
     let mut func_map = HashMap::new();
     // maps from `instr_idx` -> cost of block
     let mut cost_maps = Vec::new();
@@ -151,6 +168,16 @@ pub fn codegen<'a, 'b>(ty: &CompType, slices: &mut [SliceResult], funcs: &[FuncS
 
         // add the function to the `gen_wasm` and save the fid mapping
         let new_fid = new_func.finish_module(gen_wasm);
+
+        // Export the function so it can be called externally
+        // Gets named tyN, where:
+        // - ty is the name of the type of gas calculation (exact or approximate)
+        // - N is the original function's ID
+        gen_wasm.exports.add_export_func(
+            format!("{}{}", ty, func.fid),
+            *new_fid
+        );
+
         let generated_func = GeneratedFunc::new(*new_fid, state);
         func_map.insert(func.fid, generated_func);
 

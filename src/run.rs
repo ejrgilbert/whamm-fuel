@@ -1,0 +1,272 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::iter::zip;
+use std::path::PathBuf;
+use std::io::Write;
+use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
+use wirm::ir::id::FunctionID;
+use wirm::{DataType, Module};
+use crate::analyze::{analyze, FuncState};
+use crate::codegen::{codegen, CallState, CodeGenResult, GeneratedFunc};
+use crate::slice::{save_structure, slice, SliceResult};
+use crate::utils::{FUEL_COMPUTATION, SPACE_PER_TAB};
+
+/// Compute backward slice of values that feed control-flow ops inside a function body.
+/// - `num_params`: number of parameters (so we can mark `local.get` of param indices as Param).
+pub fn do_analysis(wasm_bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
+    // Read app Wasm into Wirm module
+    let mut wasm = Module::parse(wasm_bytes, false, true).unwrap();
+
+    let func_taints = analyze(&mut wasm);
+
+    // create the slices
+    let mut slices = slice(&func_taints, &wasm);
+    save_structure(&mut slices, &func_taints, &wasm);
+
+    // generate code for the slices (leave placeholders for the cost calculation)
+    let mut gen_wasm = Module::default();
+    let CodeGenResult { cost_maps, func_map } = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
+
+    // Flush state
+    flush_slices(wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm);
+    flush_fid_mapping(&func_map);
+
+    // Write the generated wasm to the output file
+    write_bytes(&gen_wasm.encode(), out_path)?;
+    Ok(())
+}
+
+fn write_bytes(bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
+    println!("\n====================");
+    println!("==== FLUSH WASM ====");
+    println!("====================");
+
+    try_path(&out_path.to_string());
+    if let Err(e) = std::fs::write(out_path, bytes) {
+        unreachable!(
+            "Failed to dump instrumented wasm to {} from error: {}",
+            &out_path.to_string(), e
+        )
+    } else {
+        println!("Wrote generated Wasm to {}", out_path);
+    }
+    Ok(())
+}
+
+pub(crate) fn try_path(path: &String) {
+    if !PathBuf::from(path).exists() {
+        std::fs::create_dir_all(PathBuf::from(path).parent().unwrap()).unwrap();
+    }
+}
+
+// ===========================
+// = Terminal Printing Logic =
+// ===========================
+
+fn flush_fid_mapping(fid_map: &HashMap<u32, GeneratedFunc>) {
+    println!("=====================");
+    println!("==== FID MAPPING ====");
+    println!("=====================");
+    let mut sorted: Vec<&u32> = fid_map.keys().collect();
+    sorted.sort();
+    for fid in sorted.iter() {
+        let mut tabs = 0;
+        let GeneratedFunc {
+            fid: new_fid,
+            for_params,
+            for_globals,
+            for_loads,
+            for_calls,
+            for_call_indirects
+        } = fid_map.get(*fid).unwrap();
+        print!("{fid} -> ");
+        print_fid(&format!("{}", new_fid));
+
+        tabs += 1;
+        print_params_for_state_req(tabs, "PARAMS", for_params);
+        print_params_for_state_req(tabs, "GLOBALS", for_globals);
+        print_params_for_state_req(tabs, "LOADS", for_loads);
+        print_call_params_for_state_req(tabs, "CALLS", for_calls);
+        print_call_params_for_state_req(tabs, "CALL_INDIRECTS", for_call_indirects);
+
+        println!();
+    }
+    fn print_params_for_state_req<T: Debug>(tabs: i32, name: &str, map: &HashMap<T, u32>) {
+        if !map.is_empty() {
+            println!();
+            println!("{}---- Requested {name}:", tab(tabs));
+            for (orig, new) in map.iter() {
+                println!("{}{:?} is @param{}", tab(tabs), orig, new);
+            }
+        }
+    }
+    fn print_call_params_for_state_req(tabs: i32, name: &str, map: &HashMap<usize, CallState>) {
+        if !map.is_empty() {
+            println!();
+            println!("{}---- Requested {name}:", tab(tabs));
+            for (orig, CallState {used_arg, gen_param_id}) in map.iter() {
+                println!("{}{orig},arg{used_arg} is @param{gen_param_id}", tab(tabs));
+            }
+        }
+    }
+}
+
+fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, cost_maps: &Vec<HashMap<usize, u64>>, wasm: &Module) {
+    println!("\n================");
+    println!("==== SLICES ====");
+    println!("================");
+    for (slice, (func, cost_map)) in zip(slices, zip(funcs, cost_maps)) {
+        println!("function #{} ({} instructions in slice):", slice.fid, slice.instrs.len());
+        let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
+        let mut tabs = 0;
+        print_state_taint(&slice.params, slice.total_params, "params", &mut tabs);
+        print_state_taint(&slice.globals, num_globals, "global", &mut tabs);
+        print_instr_taint(&slice.loads, "load", &mut tabs);
+        print_call_taint(&slice.calls, "calls", &mut tabs);
+        print_call_taint(&slice.call_indirects, "call_indirects", &mut tabs);
+        fn print_state_taint(taint: &HashMap<u32, DataType>, out_of: usize, ty: &str, tabs: &mut i32) {
+            *tabs += 1;
+            if !taint.is_empty() {
+                println!("{}the {ty} taint:", tab(*tabs));
+                print!("{}", tab(*tabs));
+
+                for i in 0..out_of {
+                    let tainted = taint.contains_key(&(i as u32));
+                    let s = format!("{}{i}, ", if tainted { "*" } else { " " });
+                    if tainted {
+                        print_tainted(&s);
+                    } else {
+                        print!("{s}");
+                    }
+                }
+                println!();
+            }
+            *tabs -= 1;
+        }
+        fn print_instr_taint(instrs: &HashMap<usize, DataType>, ty: &str, tabs: &mut i32) {
+            *tabs += 1;
+            if !instrs.is_empty() {
+                println!("{}the {ty} instrs influencing CF:", tab(*tabs));
+                print!("{}", tab(*tabs));
+
+                let mut sorted: Vec<&usize> = instrs.keys().collect();
+                sorted.sort();
+                for instr in sorted.iter() {
+                    print_tainted(&format!("*{}, ", **instr));
+                }
+                println!();
+            }
+            *tabs -= 1;
+        }
+        fn print_call_taint(calls: &HashMap<(usize, usize), DataType>, ty: &str, tabs: &mut i32) {
+            *tabs += 1;
+            if !calls.is_empty() {
+                println!("{}the {ty} instrs influencing CF:", tab(*tabs));
+                print!("{}", tab(*tabs));
+
+                let mut sorted: Vec<&(usize, usize)> = calls.keys().collect();
+                sorted.sort();
+                for (instr, res) in sorted.iter() {
+                    print_tainted(&format!("*(@{}, res{}), ", *instr, *res));
+                }
+                println!();
+            }
+            *tabs -= 1;
+        }
+
+        tabs += 1;
+        println!("{}the function slice:", tab(tabs));
+        tabs += 1;
+        for i in 0..body.len() {
+            let cost = cost_map.get(&i);
+            let in_slice = slice.instrs.contains(&i);
+            let in_support = slice.instrs_support.contains(&i);
+
+            if let Some(cost) = cost {
+                let s = format!("{}\t! >>{cost}\n", tab(tabs));
+                print_cost(&s);
+            }
+
+            let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
+            let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
+            if in_slice {
+                print_tainted(&s);
+            } else if in_support {
+                print_support(&s);
+            } else {
+                print!("{s}");
+            }
+        }
+        println!();
+    }
+}
+
+const WRITE_ERR: &str = "Uh oh, something went wrong while printing to terminal";
+
+fn print_tainted(s: &str) {
+    print_color(s, green);
+}
+fn print_support(s: &str) {
+    print_color(s, blue);
+}
+fn print_cost(s: &str) {
+    print_color(s, red);
+}
+fn print_fid(s: &str) {
+    print_color(s, magenta_italics);
+}
+fn print_color(s: &str, color: fn(bool, &str, &mut Buffer)) {
+    let writer = BufferWriter::stdout(ColorChoice::Always);
+    let mut buff = writer.buffer();
+    color(true, s, &mut buff);
+    writer
+        .print(&buff)
+        .expect("Uh oh, something went wrong while printing to terminal");
+}
+pub fn color(s: &str, buffer: &mut Buffer, bold: bool, italics: bool, c: Color) {
+    buffer
+        .set_color(
+            ColorSpec::new()
+                .set_bold(bold)
+                .set_italic(italics)
+                .set_fg(Some(c)),
+        )
+        .expect(WRITE_ERR);
+    write!(buffer, "{}", s).expect(WRITE_ERR);
+    buffer.set_color(&ColorSpec::default()).expect("TODO: panic message");
+}
+pub fn blue(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Blue)
+}
+#[allow(dead_code)]
+pub fn cyan(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Cyan)
+}
+pub fn green(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Green)
+}
+#[allow(dead_code)]
+pub fn magenta(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Magenta)
+}
+pub fn magenta_italics(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, true, Color::Magenta)
+}
+pub fn red(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Red)
+}
+#[allow(dead_code)]
+pub fn white(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Rgb(193, 193, 193))
+}
+#[allow(dead_code)]
+pub fn grey_italics(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, true, Color::White)
+}
+#[allow(dead_code)]
+pub fn yellow(bold: bool, s: &str, buffer: &mut Buffer) {
+    color(s, buffer, bold, false, Color::Yellow)
+}
+pub fn tab(tab: i32) -> String {
+    " ".repeat(SPACE_PER_TAB * tab as usize)
+}
