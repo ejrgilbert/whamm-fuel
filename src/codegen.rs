@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use wirm::ir::types::{InitExpr, Value};
 use wirm::{DataType, InitInstr, Module, Opcode};
@@ -8,25 +7,9 @@ use wirm::ir::id::{FunctionID, GlobalID, LocalID};
 use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
 use crate::analyze::FuncState;
+use crate::run::{CompType, FUEL_EXPORT, INIT_FUEL};
 use crate::slice::SliceResult;
-use crate::utils::{is_branching_op, INIT_FUEL};
-
-pub enum CompType {
-    Exact,
-    Approx
-}
-impl Display for CompType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                CompType::Exact => "exact",
-                CompType::Approx => "approx"
-            }
-        )
-    }
-}
+use crate::utils::is_branching_op;
 
 pub struct CodeGenResult {
     pub cost_maps: Vec<HashMap<usize, u64>>,
@@ -132,7 +115,7 @@ pub fn codegen<'a, 'b>(ty: &CompType, slices: &mut [SliceResult], funcs: &[FuncS
         false
     );
     gen_wasm.exports.add_export_global(
-        "FUEL".to_string(),
+        FUEL_EXPORT.to_string(),
         *fuel
     );
 

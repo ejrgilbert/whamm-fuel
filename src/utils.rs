@@ -2,11 +2,10 @@ use wirm::ir::id::{FunctionID, TypeID};
 use wirm::ir::module::module_types::Types;
 use wirm::Module;
 use wirm::wasmparser::{BlockType, Operator};
-use crate::codegen::CompType;
+use crate::run::CompType;
 
-pub(crate) const SPACE_PER_TAB: usize = 4;
-pub(crate) const INIT_FUEL: i64 = 1000;
 pub(crate) const FUEL_COMPUTATION: CompType = CompType::Exact;
+pub(crate) const SPACE_PER_TAB: usize = 4;
 
 pub fn is_branching_op(op: &Operator) -> bool {
     matches!(op, Operator::Br {..} | Operator::BrIf{..} | Operator::BrTable{..} |

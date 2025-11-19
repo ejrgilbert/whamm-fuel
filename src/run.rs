@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::iter::zip;
 use std::path::PathBuf;
 use std::io::Write;
@@ -10,6 +10,25 @@ use crate::analyze::{analyze, FuncState};
 use crate::codegen::{codegen, CallState, CodeGenResult, GeneratedFunc};
 use crate::slice::{save_structure, slice, SliceResult};
 use crate::utils::{FUEL_COMPUTATION, SPACE_PER_TAB};
+
+pub const INIT_FUEL: i64 = 1000;
+pub const FUEL_EXPORT: &str = "FUEL";
+pub enum CompType {
+    Exact,
+    Approx
+}
+impl Display for CompType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                CompType::Exact => "exact",
+                CompType::Approx => "approx"
+            }
+        )
+    }
+}
 
 /// Compute backward slice of values that feed control-flow ops inside a function body.
 /// - `num_params`: number of parameters (so we can mark `local.get` of param indices as Param).
