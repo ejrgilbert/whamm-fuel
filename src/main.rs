@@ -4,15 +4,16 @@ mod slice;
 mod codegen;
 
 use anyhow::{Result, bail};
-use std::collections::{HashMap, HashSet};
-use wirm::Module;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use wirm::{DataType, Module};
 use wirm::ir::id::{FunctionID};
 use std::io::Write;
 use std::iter::zip;
 use std::path::PathBuf;
 use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
 use crate::analyze::{analyze, FuncState};
-use crate::codegen::{codegen, CompType};
+use crate::codegen::{codegen, CallState, CodeGenResult, CompType, GeneratedFunc};
 use crate::slice::{save_structure, slice, SliceResult};
 
 const OUTPUT: &str = "output.wasm";
@@ -57,16 +58,16 @@ fn do_analysis(wasm_bytes: &[u8]) -> Result<()> {
     let func_taints = analyze(&mut wasm);
 
     // create the slices
-    let mut slices = slice(&func_taints);
+    let mut slices = slice(&func_taints, &wasm);
     save_structure(&mut slices, &func_taints, &wasm);
 
     // generate code for the slices (leave placeholders for the cost calculation)
     let mut gen_wasm = Module::default();
-    let (cost_maps, fid_map) = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
+    let CodeGenResult { cost_maps, func_map } = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
 
     // Flush state
     flush_slices(wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm);
-    flush_fid_mapping(&fid_map);
+    flush_fid_mapping(&func_map);
 
     // Write the generated wasm to the output file
     write_bytes(&gen_wasm.encode())
@@ -99,16 +100,51 @@ pub(crate) fn try_path(path: &String) {
 // = Terminal Printing Logic =
 // ===========================
 
-fn flush_fid_mapping(fid_map: &HashMap<u32, u32>) {
+fn flush_fid_mapping(fid_map: &HashMap<u32, GeneratedFunc>) {
     println!("=====================");
     println!("==== FID MAPPING ====");
     println!("=====================");
     let mut sorted: Vec<&u32> = fid_map.keys().collect();
     sorted.sort();
     for fid in sorted.iter() {
+        let mut tabs = 0;
+        let GeneratedFunc {
+            fid: new_fid,
+            for_params,
+            for_globals,
+            for_loads,
+            for_calls,
+            for_call_indirects
+        } = fid_map.get(*fid).unwrap();
         print!("{fid} -> ");
-        print_fid(&format!("{}", fid_map.get(*fid).unwrap()));
-        println!()
+        print_fid(&format!("{}", new_fid));
+
+        tabs += 1;
+        print_params_for_state_req(tabs, "PARAMS", &for_params);
+        print_params_for_state_req(tabs, "GLOBALS", &for_globals);
+        print_params_for_state_req(tabs, "LOADS", &for_loads);
+        print_call_params_for_state_req(tabs, "CALLS", &for_calls);
+        print_call_params_for_state_req(tabs, "CALL_INDIRECTS", &for_call_indirects);
+
+        println!();
+    }
+    fn print_params_for_state_req<T: Debug>(tabs: i32, name: &str, map: &HashMap<T, u32>) {
+        if !map.is_empty() {
+            println!();
+            println!("{}---- Requested {name}:", tab(tabs));
+            for (orig, new) in map.iter() {
+                println!("{}{:?} is @param{}", tab(tabs), orig, new);
+            }
+        }
+    }
+    fn print_call_params_for_state_req(tabs: i32, name: &str, map: &HashMap<usize, CallState>) {
+        if !map.is_empty() {
+            println!();
+            println!("{}---- Requested {name}:", tab(tabs));
+            for (orig, CallState {used_arg, gen_param_id}) in map.iter() {
+                println!("{}{orig},arg{used_arg} is @param{gen_param_id}", tab(tabs));
+            }
+        }
     }
 }
 
@@ -125,14 +161,14 @@ fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncS
         print_instr_taint(&slice.loads, "load", &mut tabs);
         print_call_taint(&slice.calls, "calls", &mut tabs);
         print_call_taint(&slice.call_indirects, "call_indirects", &mut tabs);
-        fn print_state_taint(taint: &HashSet<u32>, out_of: usize, ty: &str, tabs: &mut i32) {
+        fn print_state_taint(taint: &HashMap<u32, DataType>, out_of: usize, ty: &str, tabs: &mut i32) {
             *tabs += 1;
             if !taint.is_empty() {
                 println!("{}the {ty} taint:", tab(*tabs));
                 print!("{}", tab(*tabs));
 
                 for i in 0..out_of {
-                    let tainted = taint.contains(&(i as u32));
+                    let tainted = taint.contains_key(&(i as u32));
                     let s = format!("{}{i}, ", if tainted { "*" } else { " " });
                     if tainted {
                         print_tainted(&s);
@@ -144,13 +180,13 @@ fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncS
             }
             *tabs -= 1;
         }
-        fn print_instr_taint(instrs: &HashSet<usize>, ty: &str, tabs: &mut i32) {
+        fn print_instr_taint(instrs: &HashMap<usize, DataType>, ty: &str, tabs: &mut i32) {
             *tabs += 1;
             if !instrs.is_empty() {
                 println!("{}the {ty} instrs influencing CF:", tab(*tabs));
                 print!("{}", tab(*tabs));
 
-                let mut sorted: Vec<&usize> = instrs.iter().collect();
+                let mut sorted: Vec<&usize> = instrs.keys().collect();
                 sorted.sort();
                 for instr in sorted.iter() {
                     print_tainted(&format!("*{}, ", **instr));
@@ -159,13 +195,13 @@ fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncS
             }
             *tabs -= 1;
         }
-        fn print_call_taint(calls: &HashSet<(usize, usize)>, ty: &str, tabs: &mut i32) {
+        fn print_call_taint(calls: &HashMap<(usize, usize), DataType>, ty: &str, tabs: &mut i32) {
             *tabs += 1;
             if !calls.is_empty() {
                 println!("{}the {ty} instrs influencing CF:", tab(*tabs));
                 print!("{}", tab(*tabs));
 
-                let mut sorted: Vec<&(usize, usize)> = calls.iter().collect();
+                let mut sorted: Vec<&(usize, usize)> = calls.keys().collect();
                 sorted.sort();
                 for (instr, res) in sorted.iter() {
                     print_tainted(&format!("*(@{}, res{}), ", *instr, *res));

@@ -143,7 +143,7 @@ impl FuncTaint {
     }
 }
 
-pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
+pub fn analyze(wasm: &mut Module) -> Vec<FuncState> {
     let mut mi = ModuleIterator::new(wasm, &vec![]);
     let mut funcs: Vec<FuncState> = Vec::new();
 
@@ -167,15 +167,12 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
             state = FuncTaint::new(mi.module, func_idx);
             first = false;
         }
-        // let func_tid = mi.module.functions.get(FunctionID(*func_idx)).get_type_id();
 
         let op = mi.curr_op().unwrap_or_else(|| {
             panic!("Unable to get current operator");
         });
 
-        // TODO -- are all of these handled correctly?
         match op {
-
             // ---------------- Locals ----------------
             Operator::LocalGet { local_index } => {
                 // produce whatever the current local maps to (if known), otherwise:
@@ -316,16 +313,19 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
             }
 
             Operator::If { .. } | Operator::Block { .. } | Operator::Loop { .. } => {
-                if matches!(op, Operator::If { .. }) {
+                let inputs = if matches!(op, Operator::If { .. }) {
                     // pops condition
                     let cond = state.stack.pop().unwrap();
-                    state.instrs.push(InstrInfo {
-                        kind: OpKind::Control,
-                        inputs: vec![cond]
-                    });
-                }
+                    vec![cond]
+                } else {
+                    vec![]
+                };
                 let (_, num_results) = stack_effects(op, mi.module);
                 state.push_control(num_results);
+                state.instrs.push(InstrInfo {
+                    kind: OpKind::Control,
+                    inputs
+                });
             }
 
             Operator::End => {
@@ -334,6 +334,10 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState>{
                 if !is_func_end {
                     state.pop_control();
                 }
+                state.instrs.push(InstrInfo {
+                    kind: OpKind::Other,
+                    inputs: vec![]
+                });
             },
 
             // ---------------- Others ----------------

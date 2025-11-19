@@ -1,8 +1,9 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use wirm::ir::function::FunctionBuilder;
-use wirm::ir::id::FunctionID;
+use wirm::ir::id::{FunctionID, GlobalID, TypeID};
 use wirm::ir::module::module_types::Types;
-use wirm::Module;
+use wirm::{DataType, Module};
+use wirm::ir::module::module_globals::{GlobalKind, ImportedGlobal, LocalGlobal};
 use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
 use crate::analyze::{FuncState, OpKind, Origin};
@@ -18,36 +19,49 @@ pub struct SliceResult {
     /// all instruction indices that are included for support purposes (block structure)
     pub(crate) instrs_support: HashSet<usize>,
     /// function parameter indices that influence control
-    pub(crate) params: HashSet<u32>,
+    /// remembers the parameter type as well.
+    pub(crate) params: HashMap<u32, DataType>,
     /// global indices (global.get) that influence control
-    pub(crate) globals: HashSet<u32>,
+    /// remembers the global's type as well.
+    pub(crate) globals: HashMap<u32, DataType>,
     /// load instruction indices that influence control
-    pub(crate) loads: HashSet<usize>,
+    /// remembers the value's type as well.
+    pub(crate) loads: HashMap<usize, DataType>,
     /// call instruction indices that influence control
     /// AND the actually-used result of that call
-    pub(crate) calls: HashSet<(usize, usize)>,
+    /// remembers the value's type as well.
+    pub(crate) calls: HashMap<(usize, usize), DataType>,
     /// call_indirect instruction indices that influence control
     /// AND the actually-used result of that call
-    pub(crate) call_indirects: HashSet<(usize, usize)>,
+    /// remembers the value's type as well.
+    pub(crate) call_indirects: HashMap<(usize, usize), DataType>,
 }
 
-pub fn slice(func_taints: &[FuncState]) -> Vec<SliceResult> {
+pub fn slice(func_taints: &[FuncState], wasm: &Module) -> Vec<SliceResult> {
     let mut slices = Vec::new();
     for taint in func_taints.iter() {
-        slices.push(slice_func(taint));
+        let lf = wasm.functions.unwrap_local(FunctionID(taint.fid));
+        let Some(Types::FuncType { params , ..}) = wasm.types.get(lf.ty_id) else {
+            panic!("Should have found a function type!");
+        };
+        slices.push(slice_func(taint, params, wasm));
     }
     slices
 }
 
-fn slice_func(state: &FuncState) -> SliceResult {
+fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> SliceResult {
+    let op_at = |instr_idx: usize| -> &Operator {
+        let lf = wasm.functions.unwrap_local(FunctionID(state.fid));
+        lf.body.instructions.get_ops().get(instr_idx).unwrap()
+    };
     // Start from control instructions' inputs
     let mut worklist: VecDeque<Origin> = VecDeque::new();
     let mut included_instrs: HashSet<usize> = HashSet::new();
-    let mut included_params: HashSet<u32> = HashSet::new();
-    let mut included_globals: HashSet<u32> = HashSet::new();
-    let mut included_loads: HashSet<usize> = HashSet::new();
-    let mut included_calls: HashSet<(usize, usize)> = HashSet::new(); // the call_idx AND the result_idx used
-    let mut included_call_indirects: HashSet<(usize, usize)> = HashSet::new();
+    let mut included_params: HashMap<u32, DataType> = HashMap::new();
+    let mut included_globals: HashMap<u32, DataType> = HashMap::new();
+    let mut included_loads: HashMap<usize, DataType> = HashMap::new();
+    let mut included_calls: HashMap<(usize, usize), DataType> = HashMap::new(); // the call_idx AND the result_idx used
+    let mut included_call_indirects: HashMap<(usize, usize), DataType> = HashMap::new();
 
     for (i, info) in state.instrs.iter().enumerate() {
         if let OpKind::Control = info.kind {
@@ -75,62 +89,85 @@ fn slice_func(state: &FuncState) -> SliceResult {
             }
 
             Origin::Load {instr_idx} => {
+                let load_ty = match op_at(instr_idx) {
+                    Operator::I32Load { .. }
+                    | Operator::I32Load8S { .. }
+                    | Operator::I32Load8U { .. }
+                    | Operator::I32Load16S { .. }
+                    | Operator::I32Load16U { .. } => DataType::I32,
+                    Operator::I64Load { .. }
+                    | Operator::I64Load8S { .. }
+                    | Operator::I64Load8U { .. }
+                    | Operator::I64Load16S { .. }
+                    | Operator::I64Load16U { .. }
+                    | Operator::I64Load32S { .. }
+                    | Operator::I64Load32U { .. } => DataType::I64,
+                    Operator::F32Load { .. } => DataType::F32,
+                    Operator::F64Load { .. } => DataType::F64,
+                    op => panic!("Load opcode not supported: {op:?}")
+                };
+
                 // Mark the load itself as influencing control
-                if !included_loads.insert(instr_idx) {
+                if included_loads.insert(instr_idx, load_ty).is_some() {
                     continue;
                 }
-                // I don't care about the load's origins!
-                // A load may have inputs (address origins) — include them too
-                // if let Some(info) = state.instrs.get(instr_idx) {
-                //     for inp in &info.inputs {
-                //         worklist.push_back(inp.clone());
-                //     }
-                // }
 
                 // also include the load instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }
 
             Origin::Call {instr_idx, result_idx} => {
+                let call_arg_ty = match op_at(instr_idx) {
+                    Operator::Call { function_index } => {
+                        let Some(Types::FuncType { results, ..}) = wasm.types.get(wasm.functions.get_type_id(FunctionID(*function_index))) else {
+                            panic!("Should have found a function type!");
+                        };
+                        results.get(result_idx).unwrap().clone()
+                    },
+                    op => panic!("Call opcode not supported: {op:?}")
+                };
+
                 // Mark the call itself as influencing control
-                if !included_calls.insert((instr_idx, result_idx)) {
+                if included_calls.insert((instr_idx, result_idx), call_arg_ty).is_some() {
                     continue;
                 }
-                // I don't care about the call's origins!
-                // A call may have inputs (address origins) — include them too
-                // if let Some(info) = state.instrs.get(instr_idx) {
-                //     for inp in &info.inputs {
-                //         worklist.push_back(inp.clone());
-                //     }
-                // }
                 // also include the call instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }
 
             Origin::CallIndirect {instr_idx, result_idx} => {
+                let call_arg_ty = match op_at(instr_idx) {
+                    Operator::CallIndirect { type_index, .. } => {
+                        let Some(Types::FuncType { results, ..}) = wasm.types.get(TypeID(*type_index)) else {
+                            panic!("Should have found a function type!");
+                        };
+                        results.get(result_idx).unwrap().clone()
+                    },
+                    op => panic!("CallIndirect opcode not supported: {op:?}")
+                };
+
                 // Mark the call itself as influencing control
-                if !included_call_indirects.insert((instr_idx, result_idx)) {
+                if included_call_indirects.insert((instr_idx, result_idx), call_arg_ty).is_some() {
                     continue;
                 }
-                // I don't care about the call's origins!
-                // A call may have inputs (address origins) — include them too
-                // if let Some(info) = state.instrs.get(instr_idx) {
-                //     for inp in &info.inputs {
-                //         worklist.push_back(inp.clone());
-                //     }
-                // }
                 // also include the call instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }
 
             Origin::Global {gid, instr_idx} => {
-                included_globals.insert(gid);
+                let kind = wasm.globals.get_kind(GlobalID(gid));
+                let (GlobalKind::Local(LocalGlobal {ty, ..}) |
+                GlobalKind::Import(ImportedGlobal {ty, ..})) = kind;
+                let global_ty = DataType::from(ty.content_type);
+
+                included_globals.insert(gid, global_ty);
                 // also include the instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }
 
             Origin::Param{lid, instr_idx} => {
-                included_params.insert(lid);
+                let param_ty = func_params.get(lid as usize).unwrap().clone();
+                included_params.insert(lid, param_ty);
                 // also include the instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }
@@ -147,6 +184,7 @@ fn slice_func(state: &FuncState) -> SliceResult {
         globals: included_globals,
         loads: included_loads,
         calls: included_calls,
+        call_indirects: included_call_indirects,
         ..Default::default()
     }
 }
