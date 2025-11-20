@@ -16,7 +16,6 @@ Change the way I handle `loops`:
   - This should be a standalone function that is called, passes relevant state to it
 - For instrumentation, inject call to this loop with its bundled state for all backedges!
 
-- The way I handle if/else is wrong (see func 3 in params.wasm)
 - Infinite loop in globals test
 
 - [ ] Finish the testing framework
