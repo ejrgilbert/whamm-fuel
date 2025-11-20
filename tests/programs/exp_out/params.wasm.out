@@ -97,9 +97,10 @@ function #3 (6 instructions in slice):
         0	* LocalGet { local_index: 0 }
         1	* I32Const { value: 1 }
         2	* I32Eq
+        	! >>4
         3	* If { blockty: Empty }
         4	  I32Const { value: 1 }
-        	! >>6
+        	! >>2
         5	* Return
         	! >>1
         6	~ Else

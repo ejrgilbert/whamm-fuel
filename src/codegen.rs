@@ -182,6 +182,7 @@ fn calc_op_cost(is_in_slice: bool, at_func_end: bool, op: &Operator, state: &mut
     state.add_cost(op_cost(op));
 
     let is_cf = is_branching_op(op) || matches!(op,
+        Operator::If {..} |
         // block
         Operator::Else | Operator::End |
         // control opcodes
