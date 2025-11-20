@@ -10,10 +10,8 @@ TO FIX:
 - Infinite loop in globals test
 
 - [ ] Finish the testing framework
-      - Refactor code to be able to check the output of the program too!
-      - Write the expected fuel amounts!!
       - Get all test cases passing!
-      - Add many, many more! (maybe just assert they're valid for now?)
+      - Add more tests! (maybe just assert they're valid for now?)
 - [ ] Get this working for APPROXIMATE fuel calculations
 - [ ] How to hook up to `whamm` to actually instrument the program at the necessary locations?
       - Create a test framework that actually performs this and tests that it works

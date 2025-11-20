@@ -1,0 +1,203 @@
+================
+==== SLICES ====
+================
+function #0 (8 instructions in slice):
+    the params taint:
+     *0,
+    the function slice:
+        0	* Block { blockty: Empty }
+        1	* Block { blockty: Empty }
+        2	* LocalGet { local_index: 0 }
+        3	* I64Const { value: 1 }
+        4	* I64Eq
+        	! >>6
+        5	* BrIf { relative_depth: 1 }
+        	! >>1
+        6	~ Br { relative_depth: 0 }
+        	! >>1
+        7	~ End
+        8	  I32Const { value: 0 }
+        	! >>2
+        9	* Return
+        	! >>1
+        10	~ End
+        11	  I32Const { value: 1 }
+        	! >>2
+        12	* Return
+        	! >>1
+        13	  End
+
+function #1 (14 instructions in slice):
+    the params taint:
+     *0,
+    the function slice:
+        0	* Block { blockty: Empty }
+        1	* Block { blockty: Empty }
+        2	* Block { blockty: Empty }
+        3	* LocalGet { local_index: 0 }
+        4	* I32Const { value: 0 }
+        5	* I32Eq
+        	! >>7
+        6	* BrIf { relative_depth: 0 }
+        7	* LocalGet { local_index: 0 }
+        8	* I32Const { value: 2 }
+        9	* I32GtU
+        	! >>4
+        10	* BrIf { relative_depth: 2 }
+        	! >>1
+        11	~ Br { relative_depth: 1 }
+        	! >>1
+        12	~ End
+        13	  I32Const { value: 1 }
+        	! >>2
+        14	* Return
+        	! >>1
+        15	~ End
+        16	  I32Const { value: 0 }
+        	! >>2
+        17	* Return
+        	! >>1
+        18	~ End
+        19	  I32Const { value: 2 }
+        	! >>2
+        20	* Return
+        	! >>1
+        21	  End
+
+function #2 (7 instructions in slice):
+    the params taint:
+     *0,
+    the function slice:
+        0	* Block { blockty: Empty }
+        1	* Block { blockty: Empty }
+        2	* Block { blockty: Empty }
+        3	* LocalGet { local_index: 0 }
+        	! >>5
+        4	* BrTable { targets: BrTable { count: 3, default: 2, targets: [0, 1, 2] } }
+        	! >>1
+        5	~ End
+        6	  I32Const { value: 0 }
+        	! >>2
+        7	* Return
+        	! >>1
+        8	~ End
+        9	  I32Const { value: 1 }
+        	! >>2
+        10	* Return
+        	! >>1
+        11	~ End
+        12	  I32Const { value: 2 }
+        	! >>2
+        13	  End
+
+function #3 (6 instructions in slice):
+    the params taint:
+     *0,
+    the function slice:
+        0	* LocalGet { local_index: 0 }
+        1	* I32Const { value: 1 }
+        2	* I32Eq
+        3	* If { blockty: Empty }
+        4	  I32Const { value: 1 }
+        	! >>6
+        5	* Return
+        	! >>1
+        6	~ Else
+        7	  I32Const { value: 0 }
+        	! >>2
+        8	* Return
+        	! >>1
+        9	~ End
+        10	  I32Const { value: 0 }
+        	! >>2
+        11	  End
+
+function #4 (0 instructions in slice):
+    the function slice:
+        0	  I32Const { value: 1 }
+        1	  I32Const { value: 0 }
+        2	  LocalGet { local_index: 0 }
+        3	  I32Eqz
+        4	  Select
+        	! >>6
+        5	  End
+
+function #5 (1 instructions in slice):
+    the function slice:
+        0	* Block { blockty: Empty }
+        1	  I64Const { value: 0 }
+        2	  Call { function_index: 0 }
+        3	  GlobalSet { global_index: 0 }
+        4	  I32Const { value: 0 }
+        5	  Call { function_index: 1 }
+        6	  GlobalGet { global_index: 1 }
+        7	  I32Add
+        8	  GlobalSet { global_index: 1 }
+        9	  I32Const { value: 1 }
+        10	  Call { function_index: 1 }
+        11	  GlobalGet { global_index: 1 }
+        12	  I32Add
+        13	  GlobalSet { global_index: 1 }
+        14	  I32Const { value: 1 }
+        15	  Call { function_index: 1 }
+        16	  GlobalGet { global_index: 1 }
+        17	  I32Add
+        18	  GlobalSet { global_index: 1 }
+        19	  I32Const { value: 3 }
+        20	  Call { function_index: 1 }
+        21	  GlobalGet { global_index: 1 }
+        22	  I32Add
+        23	  GlobalSet { global_index: 1 }
+        24	  I32Const { value: 0 }
+        25	  Call { function_index: 2 }
+        26	  Drop
+        27	  I32Const { value: 1 }
+        28	  Call { function_index: 2 }
+        29	  Drop
+        30	  I32Const { value: 2 }
+        31	  Call { function_index: 2 }
+        32	  Drop
+        33	  I32Const { value: 0 }
+        34	  Call { function_index: 3 }
+        35	  Drop
+        36	  I32Const { value: 0 }
+        37	  Call { function_index: 4 }
+        38	  Drop
+        	! >>40
+        39	~ End
+        	! >>1
+        40	  End
+
+function #6 (0 instructions in slice):
+    the function slice:
+        0	  Call { function_index: 5 }
+        	! >>2
+        1	  End
+
+=====================
+==== FID MAPPING ====
+=====================
+0 -> 0
+    ---- Requested PARAMS:
+    0 is @param0
+
+1 -> 1
+    ---- Requested PARAMS:
+    0 is @param0
+
+2 -> 2
+    ---- Requested PARAMS:
+    0 is @param0
+
+3 -> 3
+    ---- Requested PARAMS:
+    0 is @param0
+
+4 -> 4
+5 -> 5
+6 -> 6
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/params.wasm

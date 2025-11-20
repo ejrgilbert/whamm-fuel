@@ -1,0 +1,33 @@
+================
+==== SLICES ====
+================
+function #0 (4 instructions in slice):
+    the load instrs influencing CF:
+     *2,
+    the function slice:
+        0	* Block { blockty: Empty }
+        1	  I32Const { value: 0 }
+        2	* I32Load { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }
+        	! >>4
+        3	* BrIf { relative_depth: 0 }
+        4	  I32Const { value: 3 }
+        	! >>2
+        5	* Return
+        	! >>1
+        6	~ End
+        7	  I32Const { value: 4 }
+        	! >>2
+        8	  End
+
+=====================
+==== FID MAPPING ====
+=====================
+0 -> 0
+    ---- Requested LOADS:
+    2 is @param0
+
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/loads.wasm

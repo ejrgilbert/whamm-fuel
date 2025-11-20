@@ -1,0 +1,39 @@
+================
+==== SLICES ====
+================
+function #0 (0 instructions in slice):
+    the function slice:
+        0	  I32Const { value: 1 }
+        	! >>2
+        1	  End
+
+function #1 (4 instructions in slice):
+    the calls instrs influencing CF:
+     *(@1, res0),
+    the function slice:
+        0	* Block { blockty: Empty }
+        1	* Call { function_index: 0 }
+        	! >>3
+        2	* BrIf { relative_depth: 0 }
+        3	  I32Const { value: 3 }
+        	! >>2
+        4	* Return
+        	! >>1
+        5	~ End
+        6	  I32Const { value: 4 }
+        	! >>2
+        7	  End
+
+=====================
+==== FID MAPPING ====
+=====================
+0 -> 0
+1 -> 1
+    ---- Requested CALLS:
+    1,arg0 is @param0
+
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/calls.wasm

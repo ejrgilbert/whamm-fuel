@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
+use termcolor::{ColorSpec, WriteColor};
 use wasi_common::sync::{add_to_linker, WasiCtxBuilder};
 use wasi_common::WasiCtx;
 use wasmtime::{Engine, ExternType, FuncType, Instance, Linker, Module, Store, Val, ValType, V128};
@@ -7,6 +10,7 @@ use whamm_fuel::run::CompType::{Approx, Exact};
 
 const BASE_IN: &str = "tests/programs/";
 const BASE_OUT: &str = "output/tests/";
+const BASE_EXP: &str = "tests/programs/exp_out";
 
 pub fn run_test(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals: HashMap<u32, i64>) {
     if let Err(e) = run_test_internal(fname, on_true_vals, on_false_vals) {
@@ -17,8 +21,16 @@ pub fn run_test(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals: Has
 fn run_test_internal(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals: HashMap<u32, i64>) -> anyhow::Result<()> {
     let in_path = format!("{BASE_IN}{fname}");
     let out_path = format!("{BASE_OUT}{fname}");
+    let exp_path = format!("{BASE_EXP}/{fname}.out");
     let bytes = std::fs::read(in_path)?;
-    do_analysis(&bytes, &out_path)?;
+
+    let mut buf = TestBuffer { buf: Vec::new() };
+    do_analysis(&mut buf, &bytes, &out_path)?;
+
+    // 0. Check the expected output information.
+    let exp_output = fs::read_to_string(exp_path)?;
+    let output = String::from_utf8(buf.buf)?;
+    assert_eq!(output.trim(), exp_output.trim());
 
     // 1. Is the output wasm file VALID?
     let engine = Engine::default();
@@ -127,4 +139,22 @@ fn get_fid(s: &str) -> Option<u32> {
         }
     }
     None
+}
+
+struct TestBuffer {
+    buf: Vec<u8>,
+}
+
+impl Write for TestBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.buf.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
+impl WriteColor for TestBuffer {
+    fn supports_color(&self) -> bool { false }   // tests: ignore colors
+    fn set_color(&mut self, _spec: &ColorSpec) -> std::io::Result<()> { Ok(()) }
+    fn reset(&mut self) -> std::io::Result<()> { Ok(()) }
 }

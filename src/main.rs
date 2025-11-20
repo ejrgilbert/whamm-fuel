@@ -5,6 +5,7 @@ mod slice;
 mod codegen;
 
 use anyhow::bail;
+use termcolor::{ColorChoice, StandardStream};
 use crate::run::do_analysis;
 
 const OUTPUT: &str = "output.wasm";
@@ -33,6 +34,8 @@ fn main() -> anyhow::Result<()> {
         bail!("Usage: whamm_fuel <file.wasm>");
     }
     let data = std::fs::read(&args[1])?;
-    do_analysis(&data, OUTPUT)?;
+
+    let stdout = StandardStream::stdout(ColorChoice::Always);
+    do_analysis(stdout, &data, OUTPUT)?;
     Ok(())
 }

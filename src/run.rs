@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
+use std::io;
 use std::iter::zip;
 use std::path::PathBuf;
 use std::io::Write;
-use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
+use termcolor::{Color, ColorSpec, WriteColor};
 use wirm::ir::id::FunctionID;
 use wirm::{DataType, Module};
 use crate::analyze::{analyze, FuncState};
@@ -32,7 +33,7 @@ impl Display for CompType {
 
 /// Compute backward slice of values that feed control-flow ops inside a function body.
 /// - `num_params`: number of parameters (so we can mark `local.get` of param indices as Param).
-pub fn do_analysis(wasm_bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
+pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
     // Read app Wasm into Wirm module
     let mut wasm = Module::parse(wasm_bytes, false, true).unwrap();
 
@@ -47,18 +48,18 @@ pub fn do_analysis(wasm_bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
     let CodeGenResult { cost_maps, func_map } = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
 
     // Flush state
-    flush_slices(wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm);
-    flush_fid_mapping(&func_map);
+    flush_slices(&mut out, wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm)?;
+    flush_fid_mapping(&mut out, &func_map)?;
 
     // Write the generated wasm to the output file
-    write_bytes(&gen_wasm.encode(), out_path)?;
+    write_bytes(&mut out, &gen_wasm.encode(), out_path)?;
     Ok(())
 }
 
-fn write_bytes(bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
-    println!("\n====================");
-    println!("==== FLUSH WASM ====");
-    println!("====================");
+fn write_bytes<W: Write>(mut out: W, bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
+    writeln!(out, "\n====================")?;
+    writeln!(out, "==== FLUSH WASM ====")?;
+    writeln!(out, "====================")?;
 
     try_path(&out_path.to_string());
     if let Err(e) = std::fs::write(out_path, bytes) {
@@ -67,7 +68,7 @@ fn write_bytes(bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
             &out_path.to_string(), e
         )
     } else {
-        println!("Wrote generated Wasm to {}", out_path);
+        writeln!(out, "Wrote generated Wasm to {}", out_path)?;
     }
     Ok(())
 }
@@ -82,10 +83,10 @@ pub(crate) fn try_path(path: &String) {
 // = Terminal Printing Logic =
 // ===========================
 
-fn flush_fid_mapping(fid_map: &HashMap<u32, GeneratedFunc>) {
-    println!("=====================");
-    println!("==== FID MAPPING ====");
-    println!("=====================");
+fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, GeneratedFunc>) -> io::Result<()> {
+    writeln!(out, "=====================")?;
+    writeln!(out, "==== FID MAPPING ====")?;
+    writeln!(out, "=====================")?;
     let mut sorted: Vec<&u32> = fid_map.keys().collect();
     sorted.sort();
     for fid in sorted.iter() {
@@ -98,103 +99,59 @@ fn flush_fid_mapping(fid_map: &HashMap<u32, GeneratedFunc>) {
             for_calls,
             for_call_indirects
         } = fid_map.get(*fid).unwrap();
-        print!("{fid} -> ");
-        print_fid(&format!("{}", new_fid));
+        write!(out, "{fid} -> ")?;
+        print_fid(&mut out, &format!("{}", new_fid));
 
         tabs += 1;
-        print_params_for_state_req(tabs, "PARAMS", for_params);
-        print_params_for_state_req(tabs, "GLOBALS", for_globals);
-        print_params_for_state_req(tabs, "LOADS", for_loads);
-        print_call_params_for_state_req(tabs, "CALLS", for_calls);
-        print_call_params_for_state_req(tabs, "CALL_INDIRECTS", for_call_indirects);
+        print_params_for_state_req(&mut out, tabs, "PARAMS", for_params)?;
+        print_params_for_state_req(&mut out, tabs, "GLOBALS", for_globals)?;
+        print_params_for_state_req(&mut out, tabs, "LOADS", for_loads)?;
+        print_call_params_for_state_req(&mut out, tabs, "CALLS", for_calls)?;
+        print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", for_call_indirects)?;
 
-        println!();
+        writeln!(out, )?;
     }
-    fn print_params_for_state_req<T: Debug>(tabs: i32, name: &str, map: &HashMap<T, u32>) {
-        if !map.is_empty() {
-            println!();
-            println!("{}---- Requested {name}:", tab(tabs));
-            for (orig, new) in map.iter() {
-                println!("{}{:?} is @param{}", tab(tabs), orig, new);
-            }
-        }
-    }
-    fn print_call_params_for_state_req(tabs: i32, name: &str, map: &HashMap<usize, CallState>) {
-        if !map.is_empty() {
-            println!();
-            println!("{}---- Requested {name}:", tab(tabs));
-            for (orig, CallState {used_arg, gen_param_id}) in map.iter() {
-                println!("{}{orig},arg{used_arg} is @param{gen_param_id}", tab(tabs));
-            }
-        }
-    }
+    Ok(())
 }
 
-fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, cost_maps: &Vec<HashMap<usize, u64>>, wasm: &Module) {
-    println!("\n================");
-    println!("==== SLICES ====");
-    println!("================");
+fn print_params_for_state_req<T: Debug, W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<T, u32>) -> io::Result<()> {
+    if !map.is_empty() {
+        writeln!(out, )?;
+        writeln!(out, "{}---- Requested {name}:", tab(tabs))?;
+        for (orig, new) in map.iter() {
+            writeln!(out, "{}{:?} is @param{}", tab(tabs), orig, new)?;
+        }
+    }
+    Ok(())
+}
+fn print_call_params_for_state_req<W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<usize, CallState>) -> io::Result<()> {
+    if !map.is_empty() {
+        writeln!(out, )?;
+        writeln!(out, "{}---- Requested {name}:", tab(tabs))?;
+        for (orig, CallState {used_arg, gen_param_id}) in map.iter() {
+            writeln!(out, "{}{orig},arg{used_arg} is @param{gen_param_id}", tab(tabs))?;
+        }
+    }
+    Ok(())
+}
+
+fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncState>, cost_maps: &Vec<HashMap<usize, u64>>, wasm: &Module) -> io::Result<()> {
+    writeln!(out, "\n================")?;
+    writeln!(out, "==== SLICES ====")?;
+    writeln!(out, "================")?;
     for (slice, (func, cost_map)) in zip(slices, zip(funcs, cost_maps)) {
-        println!("function #{} ({} instructions in slice):", slice.fid, slice.instrs.len());
+        writeln!(out, "function #{} ({} instructions in slice):", slice.fid, slice.instrs.len())?;
         let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
         let mut tabs = 0;
-        print_state_taint(&slice.params, slice.total_params, "params", &mut tabs);
-        print_state_taint(&slice.globals, num_globals, "global", &mut tabs);
-        print_instr_taint(&slice.loads, "load", &mut tabs);
-        print_call_taint(&slice.calls, "calls", &mut tabs);
-        print_call_taint(&slice.call_indirects, "call_indirects", &mut tabs);
-        fn print_state_taint(taint: &HashMap<u32, DataType>, out_of: usize, ty: &str, tabs: &mut i32) {
-            *tabs += 1;
-            if !taint.is_empty() {
-                println!("{}the {ty} taint:", tab(*tabs));
-                print!("{}", tab(*tabs));
+        print_state_taint(&mut out, &slice.params, slice.total_params, "params", &mut tabs)?;
+        print_state_taint(&mut out, &slice.globals, num_globals, "global", &mut tabs)?;
+        print_instr_taint(&mut out, &slice.loads, "load", &mut tabs)?;
+        print_call_taint(&mut out, &slice.calls, "calls", &mut tabs)?;
+        print_call_taint(&mut out, &slice.call_indirects, "call_indirects", &mut tabs)?;
 
-                for i in 0..out_of {
-                    let tainted = taint.contains_key(&(i as u32));
-                    let s = format!("{}{i}, ", if tainted { "*" } else { " " });
-                    if tainted {
-                        print_tainted(&s);
-                    } else {
-                        print!("{s}");
-                    }
-                }
-                println!();
-            }
-            *tabs -= 1;
-        }
-        fn print_instr_taint(instrs: &HashMap<usize, DataType>, ty: &str, tabs: &mut i32) {
-            *tabs += 1;
-            if !instrs.is_empty() {
-                println!("{}the {ty} instrs influencing CF:", tab(*tabs));
-                print!("{}", tab(*tabs));
-
-                let mut sorted: Vec<&usize> = instrs.keys().collect();
-                sorted.sort();
-                for instr in sorted.iter() {
-                    print_tainted(&format!("*{}, ", **instr));
-                }
-                println!();
-            }
-            *tabs -= 1;
-        }
-        fn print_call_taint(calls: &HashMap<(usize, usize), DataType>, ty: &str, tabs: &mut i32) {
-            *tabs += 1;
-            if !calls.is_empty() {
-                println!("{}the {ty} instrs influencing CF:", tab(*tabs));
-                print!("{}", tab(*tabs));
-
-                let mut sorted: Vec<&(usize, usize)> = calls.keys().collect();
-                sorted.sort();
-                for (instr, res) in sorted.iter() {
-                    print_tainted(&format!("*(@{}, res{}), ", *instr, *res));
-                }
-                println!();
-            }
-            *tabs -= 1;
-        }
 
         tabs += 1;
-        println!("{}the function slice:", tab(tabs));
+        writeln!(out, "{}the function slice:", tab(tabs))?;
         tabs += 1;
         for i in 0..body.len() {
             let cost = cost_map.get(&i);
@@ -203,47 +160,95 @@ fn flush_slices(num_globals: usize, slices: &Vec<SliceResult>, funcs: &Vec<FuncS
 
             if let Some(cost) = cost {
                 let s = format!("{}\t! >>{cost}\n", tab(tabs));
-                print_cost(&s);
+                print_cost(&mut out, &s);
             }
 
             let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
             let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
             if in_slice {
-                print_tainted(&s);
+                print_tainted(&mut out, &s);
             } else if in_support {
-                print_support(&s);
+                print_support(&mut out, &s);
             } else {
-                print!("{s}");
+                write!(out, "{s}")?;
             }
         }
-        println!();
+        writeln!(out, )?;
     }
+    Ok(())
+}
+fn print_state_taint<W: WriteColor>(mut out: W, taint: &HashMap<u32, DataType>, out_of: usize, ty: &str, tabs: &mut i32) -> io::Result<()> {
+    *tabs += 1;
+    if !taint.is_empty() {
+        writeln!(out, "{}the {ty} taint:", tab(*tabs))?;
+        write!(out, "{}", tab(*tabs))?;
+
+        for i in 0..out_of {
+            let tainted = taint.contains_key(&(i as u32));
+            let s = format!(" {}{i},", if tainted { "*" } else { " " });
+            if tainted {
+                print_tainted(&mut out, &s);
+            } else {
+                write!(out, "{s}")?;
+            }
+        }
+        writeln!(out, )?;
+    }
+    *tabs -= 1;
+    Ok(())
+}
+fn print_instr_taint<W: WriteColor>(mut out: W, instrs: &HashMap<usize, DataType>, ty: &str, tabs: &mut i32) -> io::Result<()> {
+    *tabs += 1;
+    if !instrs.is_empty() {
+        writeln!(out, "{}the {ty} instrs influencing CF:", tab(*tabs))?;
+        write!(out, "{}", tab(*tabs))?;
+
+        let mut sorted: Vec<&usize> = instrs.keys().collect();
+        sorted.sort();
+        for instr in sorted.iter() {
+            print_tainted(&mut out, &format!(" *{},", **instr));
+        }
+        writeln!(out, )?;
+    }
+    *tabs -= 1;
+    Ok(())
+}
+fn print_call_taint<W: WriteColor>(mut out: W, calls: &HashMap<(usize, usize), DataType>, ty: &str, tabs: &mut i32) -> io::Result<()> {
+    *tabs += 1;
+    if !calls.is_empty() {
+        writeln!(out, "{}the {ty} instrs influencing CF:", tab(*tabs))?;
+        write!(out, "{}", tab(*tabs))?;
+
+        let mut sorted: Vec<&(usize, usize)> = calls.keys().collect();
+        sorted.sort();
+        for (instr, res) in sorted.iter() {
+            print_tainted(&mut out, &format!(" *(@{}, res{}),", *instr, *res));
+        }
+        writeln!(out, )?;
+    }
+    *tabs -= 1;
+    Ok(())
 }
 
 const WRITE_ERR: &str = "Uh oh, something went wrong while printing to terminal";
 
-fn print_tainted(s: &str) {
-    print_color(s, green);
+fn print_tainted<W: WriteColor>(out: W, s: &str) {
+    print_color(out, s, green);
 }
-fn print_support(s: &str) {
-    print_color(s, blue);
+fn print_support<W: WriteColor>(out: W, s: &str) {
+    print_color(out, s, blue);
 }
-fn print_cost(s: &str) {
-    print_color(s, red);
+fn print_cost<W: WriteColor>(out: W, s: &str) {
+    print_color(out, s, red);
 }
-fn print_fid(s: &str) {
-    print_color(s, magenta_italics);
+fn print_fid<W: WriteColor>(out: W, s: &str) {
+    print_color(out, s, magenta_italics);
 }
-fn print_color(s: &str, color: fn(bool, &str, &mut Buffer)) {
-    let writer = BufferWriter::stdout(ColorChoice::Always);
-    let mut buff = writer.buffer();
-    color(true, s, &mut buff);
-    writer
-        .print(&buff)
-        .expect("Uh oh, something went wrong while printing to terminal");
+fn print_color<W: WriteColor>(out: W, s: &str, color: fn(W, bool, &str)) {
+    color(out, true, s);
 }
-pub fn color(s: &str, buffer: &mut Buffer, bold: bool, italics: bool, c: Color) {
-    buffer
+pub fn color<W: WriteColor>(mut out: W, s: &str, bold: bool, italics: bool, c: Color) {
+    out
         .set_color(
             ColorSpec::new()
                 .set_bold(bold)
@@ -251,40 +256,40 @@ pub fn color(s: &str, buffer: &mut Buffer, bold: bool, italics: bool, c: Color) 
                 .set_fg(Some(c)),
         )
         .expect(WRITE_ERR);
-    write!(buffer, "{}", s).expect(WRITE_ERR);
-    buffer.set_color(&ColorSpec::default()).expect("TODO: panic message");
+    write!(out, "{}", s).expect(WRITE_ERR);
+    out.set_color(&ColorSpec::default()).expect("TODO: panic message");
 }
-pub fn blue(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Blue)
-}
-#[allow(dead_code)]
-pub fn cyan(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Cyan)
-}
-pub fn green(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Green)
+pub fn blue<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Blue)
 }
 #[allow(dead_code)]
-pub fn magenta(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Magenta)
+pub fn cyan<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Cyan)
 }
-pub fn magenta_italics(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, true, Color::Magenta)
-}
-pub fn red(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Red)
+pub fn green<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Green)
 }
 #[allow(dead_code)]
-pub fn white(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Rgb(193, 193, 193))
+pub fn magenta<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Magenta)
+}
+pub fn magenta_italics<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, true, Color::Magenta)
+}
+pub fn red<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Red)
 }
 #[allow(dead_code)]
-pub fn grey_italics(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, true, Color::White)
+pub fn white<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Rgb(193, 193, 193))
 }
 #[allow(dead_code)]
-pub fn yellow(bold: bool, s: &str, buffer: &mut Buffer) {
-    color(s, buffer, bold, false, Color::Yellow)
+pub fn grey_italics<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, true, Color::White)
+}
+#[allow(dead_code)]
+pub fn yellow<W: WriteColor>(out: W, bold: bool, s: &str) {
+    color(out, s, bold, false, Color::Yellow)
 }
 pub fn tab(tab: i32) -> String {
     " ".repeat(SPACE_PER_TAB * tab as usize)

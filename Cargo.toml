@@ -18,3 +18,4 @@ termcolor = "1.4.1"
 # To check validity of modules
 wasmtime = "38.0.3"
 wasi-common = "38.0.3"
+termcolor = "1.4.1"
