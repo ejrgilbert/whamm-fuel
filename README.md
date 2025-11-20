@@ -5,7 +5,12 @@ This is a repository containing currently in-flux code as we work toward buildin
 
 # TODO List #
 
+TO FIX:
+- The way I handle if/else is wrong (see func 3 in params.wasm)
+- Infinite loop in globals test
+
 - [ ] Finish the testing framework
+      - Refactor code to be able to check the output of the program too!
       - Write the expected fuel amounts!!
       - Get all test cases passing!
       - Add many, many more! (maybe just assert they're valid for now?)

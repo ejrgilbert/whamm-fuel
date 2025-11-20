@@ -6,7 +6,7 @@ use whamm_fuel::run::{do_analysis, FUEL_EXPORT, INIT_FUEL};
 use whamm_fuel::run::CompType::{Approx, Exact};
 
 const BASE_IN: &str = "tests/programs/";
-const BASE_OUT: &str = "tests/programs/";
+const BASE_OUT: &str = "output/tests/";
 
 pub fn run_test(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals: HashMap<u32, i64>) {
     if let Err(e) = run_test_internal(fname, on_true_vals, on_false_vals) {
@@ -54,12 +54,9 @@ fn test_run(func_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty
     // Is the output what I expect for each of these values?
     let (instance, mut store) = instantiate(engine, wasm)?;
 
+    let mut args = Vec::new();
     // Optionally, get the function from the instance
     if let Some(func) = instance.get_func(&mut store, func_name) {
-        // Now you can call it dynamically if you want
-        // Example: print number of params
-        println!("  Callable with {} parameters", func_ty.params().len());
-        let mut args = Vec::new();
         for dt in func_ty.params() {
             args.push(gen_val(dt));
         }
@@ -75,7 +72,7 @@ fn test_run(func_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty
     let Val::I64(actual_fuel) = global.get(&mut store) else {
         Err(anyhow::anyhow!("expected fuel to be an i64"))?
     };
-    assert_eq!(INIT_FUEL - exp_fuel, actual_fuel, "fuel was not calculated correctly!");
+    assert_eq!(INIT_FUEL - exp_fuel, actual_fuel, "[{func_name}] fuel was not calculated correctly!\n\tRan with: {:?}", args);
 
     Ok(())
 }
