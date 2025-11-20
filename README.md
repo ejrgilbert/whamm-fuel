@@ -6,6 +6,16 @@ This is a repository containing currently in-flux code as we work toward buildin
 # TODO List #
 
 TO FIX:
+
+Change the way I handle `loops`:
+- If I see a loop, this needs to be treated similarly to a function call
+- The loop itself handles calculating its own cost
+- On generating a slice for it:
+  - Change the `loop` opcode to a `block` (keeps the generated code valid!)
+  - Generate the slice of its BODY
+  - This should be a standalone function that is called, passes relevant state to it
+- For instrumentation, inject call to this loop with its bundled state for all backedges!
+
 - The way I handle if/else is wrong (see func 3 in params.wasm)
 - Infinite loop in globals test
 

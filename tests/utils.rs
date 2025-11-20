@@ -5,24 +5,60 @@ use termcolor::{ColorSpec, WriteColor};
 use wasi_common::sync::{add_to_linker, WasiCtxBuilder};
 use wasi_common::WasiCtx;
 use wasmtime::{Engine, ExternType, FuncType, Instance, Linker, Module, Store, Val, ValType, V128};
-use whamm_fuel::run::{do_analysis, FUEL_EXPORT, INIT_FUEL};
+use whamm_fuel::run::{do_analysis, CompType, FUEL_EXPORT, INIT_FUEL};
 use whamm_fuel::run::CompType::{Approx, Exact};
 
 const BASE_IN: &str = "tests/programs/";
 const BASE_OUT: &str = "output/tests/";
 const BASE_EXP: &str = "tests/programs/exp_out";
 
-pub fn run_test(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals: HashMap<u32, i64>) {
-    if let Err(e) = run_test_internal(fname, on_true_vals, on_false_vals) {
-        panic!("Failed to run test `{}`\nError: {}", fname, e);
+pub(crate) struct TestCase {
+    name: &'static str,
+    exact_on_true_vals: HashMap<u32, i64>,
+    exact_on_false_vals: HashMap<u32, i64>,
+    approx_on_true_vals: HashMap<u32, i64>,
+    approx_on_false_vals: HashMap<u32, i64>,
+}
+impl TestCase {
+    pub(crate) fn new(name: &'static str,
+                      exact_on_true_vals: Vec<(u32, i64)>,
+                      exact_on_false_vals: Vec<(u32, i64)>,
+                      approx_on_true_vals: Vec<(u32, i64)>,
+                      approx_on_false_vals: Vec<(u32, i64)>
+    ) -> Self {
+        Self {
+            name,
+            exact_on_true_vals: exact_on_true_vals.into_iter().collect(),
+            exact_on_false_vals: exact_on_false_vals.into_iter().collect(),
+            approx_on_true_vals: approx_on_true_vals.into_iter().collect(),
+            approx_on_false_vals: approx_on_false_vals.into_iter().collect(),
+        }
+    }
+    fn get_true_val(&self, ty: &CompType, fid: u32) -> i64 {
+        match ty {
+            Exact => self.exact_on_true_vals[&fid],
+            Approx => self.approx_on_true_vals[&fid],
+        }
+    }
+    fn get_false_val(&self, ty: &CompType, fid: u32) -> i64 {
+        match ty {
+            Exact => self.exact_on_false_vals[&fid],
+            Approx => self.approx_on_false_vals[&fid],
+        }
     }
 }
 
-fn run_test_internal(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals: HashMap<u32, i64>) -> anyhow::Result<()> {
-    let in_path = format!("{BASE_IN}{fname}");
-    let out_path = format!("{BASE_OUT}{fname}");
-    let exp_path = format!("{BASE_EXP}/{fname}.out");
-    let bytes = std::fs::read(in_path)?;
+pub fn run_test(test_case: TestCase) {
+    if let Err(e) = run_test_internal(&test_case) {
+        panic!("Failed to run test `{}`\nError: {}", test_case.name, e);
+    }
+}
+
+fn run_test_internal(test: &TestCase) -> anyhow::Result<()> {
+    let in_path = format!("{BASE_IN}{}", test.name);
+    let out_path = format!("{BASE_OUT}{}", test.name);
+    let exp_path = format!("{BASE_EXP}/{}.out", test.name);
+    let bytes = fs::read(in_path)?;
 
     let mut buf = TestBuffer { buf: Vec::new() };
     do_analysis(&mut buf, &bytes, &out_path)?;
@@ -40,16 +76,12 @@ fn run_test_internal(fname: &str, on_true_vals: HashMap<u32, i64>, on_false_vals
     for export in wasm.exports() {
         if let ExternType::Func(func_ty) = export.ty() {
             let name = export.name();
-            if let Some(fid) = get_fid(name) {
-                let exp_gas_true = on_true_vals.get(&fid).unwrap_or_else(|| {
-                    panic!("Failed to find expected fuel value for function with FID: {fid}")
-                });
-                test_run(name, *exp_gas_true, gen_true, &func_ty, &engine, &wasm)?;
+            if let Some((ty, fid)) = get_fid(name) {
+                let exp_gas_true = test.get_true_val(&ty, fid);
+                test_run(name, exp_gas_true, gen_true, &func_ty, &engine, &wasm)?;
 
-                let exp_gas_false = on_false_vals.get(&fid).unwrap_or_else(|| {
-                    panic!("Failed to find expected fuel value for function with FID: {fid}")
-                });
-                test_run(name, *exp_gas_false, gen_false, &func_ty, &engine, &wasm)?;
+                let exp_gas_false = test.get_false_val(&ty, fid);
+                test_run(name, exp_gas_false, gen_false, &func_ty, &engine, &wasm)?;
             }
         }
     }
@@ -129,13 +161,16 @@ fn instantiate(engine: &Engine, wasm: &Module) -> anyhow::Result<(Instance, Stor
     Ok((instance, store))
 }
 
-fn get_fid(s: &str) -> Option<u32> {
+fn get_fid(s: &str) -> Option<(CompType, u32)> {
     // Check for prefixes
     let prefixes = [Exact.to_string(), Approx.to_string()];
     for prefix in prefixes.iter() {
         if let Some(rest) = s.strip_prefix(prefix) {
             // Try to parse the rest as u32
-            return rest.parse::<u32>().ok();
+            if let Ok(ty) = prefix.parse() {
+                return Some((ty, rest.parse::<u32>().ok()?));
+            }
+
         }
     }
     None

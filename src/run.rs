@@ -4,6 +4,7 @@ use std::io;
 use std::iter::zip;
 use std::path::PathBuf;
 use std::io::Write;
+use std::str::FromStr;
 use termcolor::{Color, ColorSpec, WriteColor};
 use wirm::ir::id::FunctionID;
 use wirm::{DataType, Module};
@@ -28,6 +29,17 @@ impl Display for CompType {
                 CompType::Approx => "approx"
             }
         )
+    }
+}
+impl FromStr for CompType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "exact" => Ok(CompType::Exact),
+            "approx" => Ok(CompType::Approx),
+            _ => Err(format!("Unknown comp type: {}", s))
+        }
     }
 }
 
