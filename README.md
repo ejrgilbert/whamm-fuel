@@ -5,8 +5,13 @@ This is a repository containing currently in-flux code as we work toward buildin
 
 # TODO List #
 
-TO FIX:
+- [ ] Add more tests! (maybe just assert they're valid for now?)
+- [ ] Get this working for APPROXIMATE fuel calculations
+- [ ] How to hook up to `whamm` to actually instrument the program at the necessary locations?
+  - Create a test framework that actually performs this and tests that it works
+- [ ] Extend to support ALL Wasm opcodes (right now it just supports Wasm CORE opcodes)
 
+## Infinite loop in globals test ##
 Change the way I handle `loops`:
 - If I see a loop, this needs to be treated similarly to a function call
 - The loop itself handles calculating its own cost
@@ -16,12 +21,3 @@ Change the way I handle `loops`:
   - This should be a standalone function that is called, passes relevant state to it
 - For instrumentation, inject call to this loop with its bundled state for all backedges!
 
-- Infinite loop in globals test
-
-- [ ] Finish the testing framework
-      - Get all test cases passing!
-      - Add more tests! (maybe just assert they're valid for now?)
-- [ ] Get this working for APPROXIMATE fuel calculations
-- [ ] How to hook up to `whamm` to actually instrument the program at the necessary locations?
-      - Create a test framework that actually performs this and tests that it works
-- [ ] Extend to support ALL Wasm opcodes (right now it just supports Wasm CORE opcodes)
