@@ -10,7 +10,7 @@ use wirm::ir::id::FunctionID;
 use wirm::{DataType, Module};
 use crate::analyze::{analyze, FuncState};
 use crate::codegen::{codegen, CallState, CodeGenResult, GeneratedFunc};
-use crate::slice::{save_structure, slice, SliceResult};
+use crate::slice::{save_structure, slice_program, SliceResult};
 use crate::utils::{FUEL_COMPUTATION, SPACE_PER_TAB};
 
 pub const INIT_FUEL: i64 = 1000;
@@ -52,7 +52,7 @@ pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_path: &str)
     let func_taints = analyze(&mut wasm);
 
     // create the slices
-    let mut slices = slice(&func_taints, &wasm);
+    let mut slices = slice_program(&func_taints, &wasm);
     save_structure(&mut slices, &func_taints, &wasm);
 
     // generate code for the slices (leave placeholders for the cost calculation)
@@ -124,7 +124,7 @@ fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<Gener
 
             writeln!(out, )?;
         }
-        
+
     }
     Ok(())
 }
@@ -154,41 +154,47 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
     writeln!(out, "\n================")?;
     writeln!(out, "==== SLICES ====")?;
     writeln!(out, "================")?;
-    for (slice, (func, cost_map)) in zip(slices, zip(funcs, cost_maps)) {
-        writeln!(out, "function #{} ({} instructions in slice):", slice.fid, slice.instrs.len())?;
-        let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
-        let mut tabs = 0;
-        print_state_taint(&mut out, &slice.params, slice.total_params, "params", &mut tabs)?;
-        print_state_taint(&mut out, &slice.globals, num_globals, "global", &mut tabs)?;
-        print_instr_taint(&mut out, &slice.loads, "load", &mut tabs)?;
-        print_call_taint(&mut out, &slice.calls, "calls", &mut tabs)?;
-        print_call_taint(&mut out, &slice.call_indirects, "call_indirects", &mut tabs)?;
+    for (result, (func, cost_map)) in zip(slices, zip(funcs, cost_maps)) {
+        let mut sorted: Vec<&usize> = result.slices.keys().collect();
+        sorted.sort();
+        for instr_index in sorted.iter() {
+            let slice = &result.slices[*instr_index];
+
+            writeln!(out, "function #{} ({} instructions in slice):", result.fid, slice.instrs.len())?;
+            let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
+            let mut tabs = 0;
+            print_state_taint(&mut out, &slice.params, result.total_params, "params", &mut tabs)?;
+            print_state_taint(&mut out, &slice.globals, num_globals, "global", &mut tabs)?;
+            print_instr_taint(&mut out, &slice.loads, "load", &mut tabs)?;
+            print_call_taint(&mut out, &slice.calls, "calls", &mut tabs)?;
+            print_call_taint(&mut out, &slice.call_indirects, "call_indirects", &mut tabs)?;
 
 
-        tabs += 1;
-        writeln!(out, "{}the function slice:", tab(tabs))?;
-        tabs += 1;
-        for i in 0..body.len() {
-            let cost = cost_map.get(&i);
-            let in_slice = slice.instrs.contains(&i);
-            let in_support = slice.instrs_support.contains(&i);
+            tabs += 1;
+            writeln!(out, "{}the function slice:", tab(tabs))?;
+            tabs += 1;
+            for i in 0..body.len() {
+                let cost = cost_map.get(&i);
+                let in_slice = slice.instrs.contains(&i);
+                let in_support = slice.instrs_support.contains(&i);
 
-            if let Some(cost) = cost {
-                let s = format!("{}\t! >>{cost}\n", tab(tabs));
-                print_cost(&mut out, &s);
+                if let Some(cost) = cost {
+                    let s = format!("{}\t! >>{cost}\n", tab(tabs));
+                    print_cost(&mut out, &s);
+                }
+
+                let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
+                let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
+                if in_slice {
+                    print_tainted(&mut out, &s);
+                } else if in_support {
+                    print_support(&mut out, &s);
+                } else {
+                    write!(out, "{s}")?;
+                }
             }
-
-            let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
-            let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
-            if in_slice {
-                print_tainted(&mut out, &s);
-            } else if in_support {
-                print_support(&mut out, &s);
-            } else {
-                write!(out, "{s}")?;
-            }
+            writeln!(out, )?;
         }
-        writeln!(out, )?;
     }
     Ok(())
 }

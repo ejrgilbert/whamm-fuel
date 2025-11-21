@@ -7,6 +7,40 @@ use crate::run::CompType;
 pub(crate) const FUEL_COMPUTATION: CompType = CompType::Exact;
 pub(crate) const SPACE_PER_TAB: usize = 4;
 
+
+
+pub fn is_loop(instr_idx: usize, op: &Operator) -> Option<String> {
+    if matches!(op, Operator::Loop {..}) {
+        Some(format!("_loop_at_{instr_idx}"))
+    } else {
+        None
+    }
+}
+
+// find the end of the loop body
+pub fn find_subsection_end(body: &[Operator]) -> usize {
+    let mut depth = 0;
+
+    let mut i = 0;
+    while i < body.len() {
+        let op = &body[i];
+        if is_block(op) {
+            depth += 1;
+        } else if matches!(op, Operator::End) {
+            if depth == 0 {
+                return i;
+            }
+            depth -= 1;
+        }
+        i += 1;
+    }
+
+    fn is_block(op: &Operator) -> bool {
+        matches!(op, Operator::Block { .. } | Operator::Loop { .. } | Operator::If {..})
+    }
+    i
+}
+
 pub fn is_branching_op(op: &Operator) -> bool {
     matches!(op, Operator::Br {..} | Operator::BrIf{..} | Operator::BrTable{..} |
                  Operator::BrOnCast {..} | Operator::BrOnCastFail {..} |  Operator::BrOnNonNull {..} |

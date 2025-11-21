@@ -18,11 +18,12 @@ fn test_calls() {
 }
 #[test]
 fn test_globals() {
+    // TODO -- add tests to exercise the loop subsections!
     run_test(
         TestCase::new(
             "globals.wasm",
-            vec![(0, 10)],
-            vec![(0, 11)],
+            vec![(0, 4)],
+            vec![(0, 4)],
             vec![],
             vec![]
         )

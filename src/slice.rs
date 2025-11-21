@@ -6,14 +6,34 @@ use wirm::{DataType, Module};
 use wirm::ir::module::module_globals::{GlobalKind, ImportedGlobal, LocalGlobal};
 use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
-use crate::analyze::{FuncState, OpKind, Origin};
-use crate::utils::is_branching_op;
+use crate::analyze::{FuncState, InstrInfo, OpKind, Origin};
+use crate::utils::{find_subsection_end, is_branching_op, is_loop};
 
 /// Result of the slice analysis.
 #[derive(Debug, Default)]
 pub struct SliceResult {
     pub(crate) fid: u32,
     pub(crate) total_params: usize,
+    /// Maps from instr_idx -> Slice
+    /// There can be 1->many slices for a function
+    /// due to how we're handling `loop` blocks!
+    pub(crate) slices: HashMap<usize, Slice>,
+}
+impl SliceResult {
+    fn new(fid: u32, total_params: usize) -> Self {
+        Self {
+            fid, total_params, ..Default::default()
+        }
+    }
+    fn add_slice(&mut self, instr_idx: usize, slice: Slice) {
+        self.slices.insert(instr_idx, slice);
+    }
+}
+#[derive(Debug, Default)]
+pub struct Slice {
+    pub(crate) start_instr_idx: usize,  // (inclusive)
+    pub(crate) end_instr_idx: usize,    // (exclusive)
+    pub(crate) spec_name: String,
     /// all instruction indices that are in the backward slice (influencing control).
     pub(crate) instrs: HashSet<usize>,
     /// all instruction indices that are included for support purposes (block structure)
@@ -37,21 +57,23 @@ pub struct SliceResult {
     pub(crate) call_indirects: HashMap<(usize, usize), DataType>,
 }
 
-pub fn slice(func_taints: &[FuncState], wasm: &Module) -> Vec<SliceResult> {
-    let mut slices = Vec::new();
+pub fn slice_program(func_taints: &[FuncState], wasm: &Module) -> Vec<SliceResult> {
+    let mut results = Vec::new();
     for taint in func_taints.iter() {
         let lf = wasm.functions.unwrap_local(FunctionID(taint.fid));
         let Some(Types::FuncType { params , ..}) = wasm.types.get(lf.ty_id) else {
             panic!("Should have found a function type!");
         };
-        slices.push(slice_func(taint, params, wasm));
+        let mut result = SliceResult::new(taint.fid, taint.total_params);
+        slice(&mut result, taint.fid, "".to_string(), 0, &taint.instrs, params, wasm);
+        results.push(result);
     }
-    slices
+    results
 }
 
-fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> SliceResult {
+fn slice(result: &mut SliceResult, fid: u32, spec_name: String, true_start: usize, instrs_info: &[InstrInfo], func_params: &[DataType], wasm: &Module) {
     let op_at = |instr_idx: usize| -> &Operator {
-        let lf = wasm.functions.unwrap_local(FunctionID(state.fid));
+        let lf = wasm.functions.unwrap_local(FunctionID(fid));
         lf.body.instructions.get_ops().get(instr_idx).unwrap()
     };
     // Start from control instructions' inputs
@@ -63,15 +85,32 @@ fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> Sli
     let mut included_calls: HashMap<(usize, usize), DataType> = HashMap::new(); // the call_idx AND the result_idx used
     let mut included_call_indirects: HashMap<(usize, usize), DataType> = HashMap::new();
 
-    for (i, info) in state.instrs.iter().enumerate() {
-        if let OpKind::Control = info.kind {
+    let mut i = 0;
+    while i < instrs_info.len() {
+        let true_instr_idx = true_start + i;
+        let info = &instrs_info[i];
+
+        if is_loop(true_instr_idx, op_at(true_instr_idx)).is_some() {
+            let lf = wasm.functions.unwrap_local(FunctionID(fid));
+            let body = lf.body.instructions.get_ops();
+            let end = find_subsection_end(&body[i+1..]); // exclusive end index within body[i+1..]
+            let sub_sec = &instrs_info[i+1..i+1+end];
+
+            // Recurse on the subsection
+            let spec_name = format!("_loop_at_{true_instr_idx}");
+            slice(result, fid, spec_name, true_instr_idx + 1, sub_sec, func_params, wasm);
+
+            // Move i past the subsection so we don't reprocess it (skip special opcode and its END)
+            i += end + 1;
+        } else if let OpKind::Control = info.kind {
             // any input to this control op is a starting point of the backward slice
             for inp in &info.inputs {
                 worklist.push_back(inp.clone());
             }
             // and include the control instruction itself
-            included_instrs.insert(i);
+            included_instrs.insert(true_instr_idx);
         }
+        i += 1;
     }
 
     // Trace origins backwards
@@ -83,7 +122,7 @@ fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> Sli
                     continue;
                 }
                 // push its inputs to the worklist
-                for inp in state.instrs.get(instr_idx).map(|i| i.inputs.clone()).unwrap_or_default() {
+                for inp in instrs_info.get(instr_idx).map(|i| i.inputs.clone()).unwrap_or_default() {
                     worklist.push_back(inp);
                 }
             }
@@ -176,17 +215,21 @@ fn slice_func(state: &FuncState, func_params: &[DataType], wasm: &Module) -> Sli
         }
     }
 
-    SliceResult {
-        fid: state.fid,
-        total_params: state.total_params,
-        instrs: included_instrs,
-        params: included_params,
-        globals: included_globals,
-        loads: included_loads,
-        calls: included_calls,
-        call_indirects: included_call_indirects,
-        ..Default::default()
-    }
+    result.add_slice(
+        true_start,
+        Slice {
+            start_instr_idx: true_start,
+            end_instr_idx: true_start + instrs_info.len(),
+            spec_name,
+            instrs: included_instrs,
+            params: included_params,
+            globals: included_globals,
+            loads: included_loads,
+            calls: included_calls,
+            call_indirects: included_call_indirects,
+            ..Default::default()
+        }
+    );
 }
 
 // ===================
@@ -238,24 +281,26 @@ impl IdentifyStructure {
 }
 
 pub fn save_structure(slices: &mut [SliceResult], funcs: &[FuncState], wasm: &Module) {
-    for (slice, func) in slices.iter_mut().zip(funcs.iter()) {
-        let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
-        let Some(Types::FuncType { params , results, ..}) = wasm.types.get(lf.ty_id) else {
-            panic!("Should have found a function type!");
-        };
+    for (result, func) in slices.iter_mut().zip(funcs.iter()) {
+        for (_instr_idx, slice) in result.slices.iter_mut() {
+            let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
+            let Some(Types::FuncType { params , results, ..}) = wasm.types.get(lf.ty_id) else {
+                panic!("Should have found a function type!");
+            };
 
-        let mut new_func = FunctionBuilder::new(params, results);
-        let body = &lf.body.instructions;
-        let mut state = IdentifyStructure::default();     // one instance of state per function!
+            let mut new_func = FunctionBuilder::new(params, results);
+            let body = &lf.body.instructions;
+            let mut state = IdentifyStructure::default();     // one instance of state per function!
 
-        for (i, op) in body.get_ops().iter().enumerate() {
-            let in_slice = slice.instrs.contains(&i);
-            let support_ops = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
-            slice.instrs_support.extend(support_ops);
+            for (i, op) in body.get_ops().iter().enumerate() {
+                let in_slice = slice.instrs.contains(&i);
+                let support_ops = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
+                slice.instrs_support.extend(support_ops);
 
-            if in_slice {
-                // put this opcode in the generated function
-                new_func.inject(op.clone());
+                if in_slice {
+                    // put this opcode in the generated function
+                    new_func.inject(op.clone());
+                }
             }
         }
     }

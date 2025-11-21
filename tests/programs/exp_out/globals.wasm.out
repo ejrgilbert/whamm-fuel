@@ -1,29 +1,45 @@
 ================
 ==== SLICES ====
 ================
-function #0 (3 instructions in slice):
+function #0 (0 instructions in slice):
+    the function slice:
+        0	  I32Const { value: 1 }
+        1	  GlobalSet { global_index: 0 }
+        2	  Loop { blockty: Empty }
+        3	  GlobalGet { global_index: 0 }
+        4	  I32Const { value: 1 }
+        5	  I32Sub
+        6	  GlobalSet { global_index: 0 }
+        7	  GlobalGet { global_index: 0 }
+        	! >>6
+        8	  BrIf { relative_depth: 0 }
+        9	  End
+        	! >>4
+        10	  End
+
+function #0 (2 instructions in slice):
     the global taint:
      *0,
     the function slice:
         0	  I32Const { value: 1 }
         1	  GlobalSet { global_index: 0 }
-        2	* Loop { blockty: Empty }
+        2	~ Loop { blockty: Empty }
         3	  GlobalGet { global_index: 0 }
         4	  I32Const { value: 1 }
         5	  I32Sub
         6	  GlobalSet { global_index: 0 }
         7	* GlobalGet { global_index: 0 }
-        	! >>9
+        	! >>6
         8	* BrIf { relative_depth: 0 }
-        	! >>1
         9	~ End
-        	! >>1
+        	! >>4
         10	  End
 
 =====================
 ==== FID MAPPING ====
 =====================
 0 -> 0:exact0
+0 -> 1:exact0_loop_at_2
     ---- Requested GLOBALS:
     0 is @param0
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
-use wirm::ir::types::{InitExpr, Instructions, Value};
+use wirm::ir::types::{InitExpr, Value};
 use wirm::{DataType, InitInstr, Module, Opcode};
 use wirm::ir::function::FunctionBuilder;
 use wirm::ir::id::{FunctionID, GlobalID, LocalID};
@@ -8,7 +8,7 @@ use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
 use crate::analyze::FuncState;
 use crate::run::{CompType, FUEL_EXPORT, INIT_FUEL};
-use crate::slice::SliceResult;
+use crate::slice::{Slice, SliceResult};
 use crate::utils::is_branching_op;
 
 pub struct CodeGenResult {
@@ -64,7 +64,7 @@ struct CodeGen {
     curr_cost: u64
 }
 impl CodeGen {
-    fn new(slice: &SliceResult) -> (Self, Vec<DataType>) {
+    fn new(slice: &Slice) -> (Self, Vec<DataType>) {
         let mut used_params = Vec::new();
 
         let for_params = process_needed_state(&slice.params, &mut used_params);
@@ -127,7 +127,7 @@ pub fn codegen<'a, 'b>(ty: &CompType, slices: &mut [SliceResult], funcs: &[FuncS
     let mut func_map = HashMap::new();
     // maps from `instr_idx` -> cost of block
     let mut cost_maps = Vec::new();
-    for (slice, func) in slices.iter_mut().zip(funcs.iter()) {
+    for (func_slices, func) in slices.iter_mut().zip(funcs.iter()) {
         // We're going to have one instance of cost_map per function because it's tied to the
         // ORIGINAL function, not the generated functions (there can be many per original function
         // due to how we handle `loop` blocks.
@@ -136,8 +136,7 @@ pub fn codegen<'a, 'b>(ty: &CompType, slices: &mut [SliceResult], funcs: &[FuncS
 
         let body = &lf.body.instructions;
 
-        let mut generated_funcs = vec![];
-        gen_func(&fuel, &mut cost_map, func.fid, body, slice, ty, gen_wasm, &mut generated_funcs);
+        let generated_funcs = gen_from_slices(func.fid, body.get_ops(), func_slices, &fuel, &mut cost_map, ty, gen_wasm);
         func_map.insert(func.fid, generated_funcs);
 
         cost_maps.push(cost_map);
@@ -149,12 +148,41 @@ pub fn codegen<'a, 'b>(ty: &CompType, slices: &mut [SliceResult], funcs: &[FuncS
     }
 }
 
-fn gen_func<'a, 'b>(fuel: &GlobalID, cost_map: &mut HashMap<usize, u64>, orig_fid: u32, body: &Instructions<'a>, slice: &mut SliceResult, ty: &CompType, gen_wasm: &mut Module<'b>, generated_funcs: &mut Vec<GeneratedFunc>) where 'a: 'b {
+fn gen_from_slices<'a, 'b>(orig_fid: u32, body: &[Operator<'a>], func_slices: &SliceResult, fuel: &GlobalID, cost_map: &mut HashMap<usize, u64>, ty: &CompType, gen_wasm: &mut Module<'b>) -> Vec<GeneratedFunc> where 'a: 'b {
+    let mut generated_funcs = vec![];
+
+    let mut i = 0;
+    while i < body.len() {
+        if let Some(slice) = func_slices.slices.get(&i) {
+            // I know I need to generate a function for this slice!
+            let subsec = &body[slice.start_instr_idx..slice.end_instr_idx];
+            gen_func(slice.start_instr_idx, &slice.spec_name, &fuel, cost_map, orig_fid, subsec, slice, func_slices, ty, gen_wasm, &mut generated_funcs);
+        }
+        i += 1;
+    }
+
+    generated_funcs
+}
+
+fn gen_func<'a, 'b>(true_start_idx: usize, spec_name: &str, fuel: &GlobalID, cost_map: &mut HashMap<usize, u64>, orig_fid: u32, body: &[Operator<'a>], slice: &Slice, func_slices: &SliceResult, ty: &CompType, gen_wasm: &mut Module<'b>, generated_funcs: &mut Vec<GeneratedFunc>) where 'a: 'b {
     let (mut state, used_params) = CodeGen::new(slice);     // one instance of state per function!
     let mut new_func = FunctionBuilder::new(&used_params, &[]);
-    for (i, op) in body.get_ops().iter().enumerate() {
-        let in_slice = slice.instrs.contains(&i);
-        let in_support = slice.instrs_support.contains(&i);
+
+    let mut i = 0;
+    while i < body.len() {
+        let mut true_instr_idx = true_start_idx + i;
+        if true_instr_idx != slice.start_instr_idx {
+            if let Some(subslice) = func_slices.slices.get(&true_instr_idx) {
+                // if there's a subslice here, skip over its instructions
+                i = subslice.end_instr_idx + 1;
+                true_instr_idx = true_start_idx + i;
+            }
+        }
+
+        let op = &body[i];
+
+        let in_slice = slice.instrs.contains(&true_instr_idx);
+        let in_support = slice.instrs_support.contains(&true_instr_idx);
         let do_fuel_before = calc_op_cost(in_slice | in_support, i == body.len() - 1, op, &mut state);
 
         if do_fuel_before {
@@ -162,14 +190,16 @@ fn gen_func<'a, 'b>(fuel: &GlobalID, cost_map: &mut HashMap<usize, u64>, orig_fi
             let cost = state.curr_cost;
             gen_fuel_comp(&fuel, ty, &mut state, &mut new_func);
             state.reset_cost();
-            cost_map.insert(i, cost);
+            cost_map.insert(true_instr_idx, cost);
         }
 
         if in_slice | in_support {
             // Generate opcode that needs to be placed here in the generated function
-            gen_op(i, op, &state, &mut new_func);
+            gen_op(true_instr_idx, op, &state, &mut new_func);
         }
+        i += 1;
     }
+
     // add the function to the `gen_wasm` and save the fid mapping
     let new_fid = new_func.finish_module(gen_wasm);
 
@@ -177,13 +207,57 @@ fn gen_func<'a, 'b>(fuel: &GlobalID, cost_map: &mut HashMap<usize, u64>, orig_fi
     // Gets named tyN, where:
     // - ty is the name of the type of gas calculation (exact or approximate)
     // - N is the original function's ID
-    let fname = format!("{}{}", ty, orig_fid);
+    let fname = format!("{}{}{}", ty, orig_fid, spec_name);
     gen_wasm.exports.add_export_func(
         fname.clone(),
         *new_fid
     );
     generated_funcs.push(GeneratedFunc::new(*new_fid, fname, state));
 }
+
+
+// fn gen_func_old<'a, 'b>(fuel: &GlobalID, cost_map: &mut HashMap<usize, u64>, orig_fid: u32, start_idx: usize, body: &[Operator<'a>], slice: &mut SliceResult, ty: &CompType, gen_wasm: &mut Module<'b>, generated_funcs: &mut Vec<GeneratedFunc>) where 'a: 'b {
+//     let (mut state, used_params) = CodeGen::new(slice);     // one instance of state per function!
+//     let mut new_func = FunctionBuilder::new(&used_params, &[]);
+//     for (i, op) in body.iter().enumerate().skip(start_idx) {
+//         if handle_special(op) {
+//             // TODO: SOMEWHERE IN HERE I NEED TO HANDLE A `loop` OPCODE
+//             // probably gonna be recursively calling itself here!
+//             todo!()
+//
+//             // how to skip over the opcodes that I've now processed?
+//         }
+//         let in_slice = slice.instrs.contains(&i);
+//         let in_support = slice.instrs_support.contains(&i);
+//         let do_fuel_before = calc_op_cost(in_slice | in_support, i == body.len() - 1, op, &mut state);
+//
+//         if do_fuel_before {
+//             // Generate the fuel decrement
+//             let cost = state.curr_cost;
+//             gen_fuel_comp(&fuel, ty, &mut state, &mut new_func);
+//             state.reset_cost();
+//             cost_map.insert(i, cost);
+//         }
+//
+//         if in_slice | in_support {
+//             // Generate opcode that needs to be placed here in the generated function
+//             gen_op(i, op, &state, &mut new_func);
+//         }
+//     }
+//     // add the function to the `gen_wasm` and save the fid mapping
+//     let new_fid = new_func.finish_module(gen_wasm);
+//
+//     // Export the function so it can be called externally
+//     // Gets named tyN, where:
+//     // - ty is the name of the type of gas calculation (exact or approximate)
+//     // - N is the original function's ID
+//     let fname = format!("{}{}", ty, orig_fid);
+//     gen_wasm.exports.add_export_func(
+//         fname.clone(),
+//         *new_fid
+//     );
+//     generated_funcs.push(GeneratedFunc::new(*new_fid, fname, state));
+// }
 
 /// Returns: (should_include, do_fuel_before)
 /// - support_opcode: whether this opcode should be included in the generated function.
