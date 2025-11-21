@@ -27,8 +27,8 @@ function #1 (4 instructions in slice):
 =====================
 ==== FID MAPPING ====
 =====================
-0 -> 0
-1 -> 1
+0 -> 0:exact0
+1 -> 1:exact1
     ---- Requested CALLS:
     1,arg0 is @param0
 

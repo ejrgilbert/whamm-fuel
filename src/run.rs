@@ -95,33 +95,36 @@ pub(crate) fn try_path(path: &String) {
 // = Terminal Printing Logic =
 // ===========================
 
-fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, GeneratedFunc>) -> io::Result<()> {
+fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<GeneratedFunc>>) -> io::Result<()> {
     writeln!(out, "=====================")?;
     writeln!(out, "==== FID MAPPING ====")?;
     writeln!(out, "=====================")?;
     let mut sorted: Vec<&u32> = fid_map.keys().collect();
     sorted.sort();
     for fid in sorted.iter() {
-        let mut tabs = 0;
-        let GeneratedFunc {
+        for GeneratedFunc {
             fid: new_fid,
+            fname,
             for_params,
             for_globals,
             for_loads,
             for_calls,
             for_call_indirects
-        } = fid_map.get(*fid).unwrap();
-        write!(out, "{fid} -> ")?;
-        print_fid(&mut out, &format!("{}", new_fid));
+        } in fid_map.get(*fid).unwrap().iter() {
+            let mut tabs = 0;
+            write!(out, "{fid} -> ")?;
+            print_fid(&mut out, &format!("{new_fid}:{fname}"));
 
-        tabs += 1;
-        print_params_for_state_req(&mut out, tabs, "PARAMS", for_params)?;
-        print_params_for_state_req(&mut out, tabs, "GLOBALS", for_globals)?;
-        print_params_for_state_req(&mut out, tabs, "LOADS", for_loads)?;
-        print_call_params_for_state_req(&mut out, tabs, "CALLS", for_calls)?;
-        print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", for_call_indirects)?;
+            tabs += 1;
+            print_params_for_state_req(&mut out, tabs, "PARAMS", for_params)?;
+            print_params_for_state_req(&mut out, tabs, "GLOBALS", for_globals)?;
+            print_params_for_state_req(&mut out, tabs, "LOADS", for_loads)?;
+            print_call_params_for_state_req(&mut out, tabs, "CALLS", for_calls)?;
+            print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", for_call_indirects)?;
 
-        writeln!(out, )?;
+            writeln!(out, )?;
+        }
+        
     }
     Ok(())
 }

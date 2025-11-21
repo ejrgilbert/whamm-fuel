@@ -178,25 +178,25 @@ function #6 (0 instructions in slice):
 =====================
 ==== FID MAPPING ====
 =====================
-0 -> 0
+0 -> 0:exact0
     ---- Requested PARAMS:
     0 is @param0
 
-1 -> 1
+1 -> 1:exact1
     ---- Requested PARAMS:
     0 is @param0
 
-2 -> 2
+2 -> 2:exact2
     ---- Requested PARAMS:
     0 is @param0
 
-3 -> 3
+3 -> 3:exact3
     ---- Requested PARAMS:
     0 is @param0
 
-4 -> 4
-5 -> 5
-6 -> 6
+4 -> 4:exact4
+5 -> 5:exact5
+6 -> 6:exact6
 
 ====================
 ==== FLUSH WASM ====

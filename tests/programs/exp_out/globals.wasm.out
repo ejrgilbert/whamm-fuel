@@ -23,7 +23,7 @@ function #0 (3 instructions in slice):
 =====================
 ==== FID MAPPING ====
 =====================
-0 -> 0
+0 -> 0:exact0
     ---- Requested GLOBALS:
     0 is @param0
 
