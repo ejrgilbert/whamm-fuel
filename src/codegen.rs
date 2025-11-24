@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::hash::Hash;
-use wirm::ir::types::{BlockType, InitExpr, Value};
-use wirm::{DataType, InitInstr, Module, Opcode};
+use wirm::ir::types::BlockType;
+use wirm::{DataType, Module, Opcode};
 use wirm::ir::function::FunctionBuilder;
-use wirm::ir::id::{FunctionID, GlobalID, LocalID};
+use wirm::ir::id::{FunctionID, LocalID};
 use wirm::module_builder::AddLocal;
 use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
 use crate::analyze::FuncState;
-use crate::run::{CompType, FUEL_EXPORT, INIT_FUEL};
+use crate::run::CompType;
 use crate::slice::{Slice, SliceResult};
 use crate::utils::is_branching_op;
 

@@ -1,4 +1,4 @@
-use crate::utils::{run_test, TestCase};
+use crate::utils::{run_test, Exp, Test};
 
 mod utils;
 
@@ -6,62 +6,68 @@ mod utils;
 
 #[test]
 fn test_calls() {
-    run_test(
-        TestCase::new(
-            "calls.wasm",
-            vec![(0, 2), (1, 5)],
-            vec![(0, 2), (1, 5)],
-            vec![],
-            vec![]
-        )
+    let mut test = Test::new("calls.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(2, 2)
     );
+    test.add_base_case(
+        1,
+        Exp::new_exact(5, 5)
+    );
+
+    run_test(test);
 }
 #[test]
 fn test_globals() {
     // TODO -- add tests to exercise the loop subsections!
-    run_test(
-        TestCase::new(
-            "globals.wasm",
-            vec![(0, 4)],
-            vec![(0, 4)],
-            vec![],
-            vec![]
-        )
+    let mut test = Test::new("globals.wasm");
+    test.add_case_with_loops(
+        0,
+        Exp::new_exact(4, 4),
+        vec![(2, Exp::new_exact(6, 6))]
     );
+    run_test(test);
 }
 #[test]
 fn test_loads() {
-    run_test(
-        TestCase::new(
-        "loads.wasm",
-        vec![(0, 6)],
-        vec![(0, 6)],
-        vec![],
-        vec![]
-        )
+    let mut test = Test::new("loads.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(6, 6)
     );
+    run_test(test);
 }
 #[test]
 fn test_params() {
-    run_test(
-        TestCase::new(
-            "params.wasm",
-            vec![(0, 8),
-                (1, 14),
-                (2, 7),
-                (3, 6),
-                (4, 6),
-                (5, 41),
-                (6, 2)],
-            vec![(0, 9),
-                (1, 9),
-                (2, 7),
-                (3, 6),
-                (4, 6),
-                (5, 41),
-                (6, 2)],
-            vec![],
-            vec![]
-        )
+    let mut test = Test::new("params.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(8, 9)
     );
+    test.add_base_case(
+        1,
+        Exp::new_exact(14, 9)
+    );
+    test.add_base_case(
+        2,
+        Exp::new_exact(7, 7)
+    );
+    test.add_base_case(
+        3,
+        Exp::new_exact(6, 6)
+    );
+    test.add_base_case(
+        4,
+        Exp::new_exact(6, 6)
+    );
+    test.add_base_case(
+        5,
+        Exp::new_exact(41, 41)
+    );
+    test.add_base_case(
+        6,
+        Exp::new_exact(2, 2)
+    );
+    run_test(test);
 }

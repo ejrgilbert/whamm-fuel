@@ -13,8 +13,6 @@ use crate::codegen::{codegen, CallState, CodeGenResult, GeneratedFunc};
 use crate::slice::{save_structure, slice_program, SliceResult};
 use crate::utils::{FUEL_COMPUTATION, SPACE_PER_TAB};
 
-pub const INIT_FUEL: i64 = 1000;
-pub const FUEL_EXPORT: &str = "FUEL";
 pub enum CompType {
     Exact,
     Approx

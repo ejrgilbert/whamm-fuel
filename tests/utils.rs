@@ -5,56 +5,78 @@ use termcolor::{ColorSpec, WriteColor};
 use wasi_common::sync::{add_to_linker, WasiCtxBuilder};
 use wasi_common::WasiCtx;
 use wasmtime::{Engine, ExternType, FuncType, Instance, Linker, Module, Store, Val, ValType, V128};
-use whamm_fuel::run::{do_analysis, CompType, FUEL_EXPORT, INIT_FUEL};
+use whamm_fuel::run::{do_analysis, CompType};
 use whamm_fuel::run::CompType::{Approx, Exact};
 
 const BASE_IN: &str = "tests/programs/";
 const BASE_OUT: &str = "output/tests/";
 const BASE_EXP: &str = "tests/programs/exp_out";
 
-pub(crate) struct TestCase {
+#[derive(Default)]
+pub(crate) struct Test {
     name: &'static str,
-    exact_on_true_vals: HashMap<u32, i64>,
-    exact_on_false_vals: HashMap<u32, i64>,
-    approx_on_true_vals: HashMap<u32, i64>,
-    approx_on_false_vals: HashMap<u32, i64>,
+    expected: HashMap<u32, TestCase>
 }
-impl TestCase {
-    pub(crate) fn new(name: &'static str,
-                      exact_on_true_vals: Vec<(u32, i64)>,
-                      exact_on_false_vals: Vec<(u32, i64)>,
-                      approx_on_true_vals: Vec<(u32, i64)>,
-                      approx_on_false_vals: Vec<(u32, i64)>
+impl Test {
+    pub(crate) fn new(name: &'static str
     ) -> Self {
         Self {
             name,
-            exact_on_true_vals: exact_on_true_vals.into_iter().collect(),
-            exact_on_false_vals: exact_on_false_vals.into_iter().collect(),
-            approx_on_true_vals: approx_on_true_vals.into_iter().collect(),
-            approx_on_false_vals: approx_on_false_vals.into_iter().collect(),
+            ..Default::default()
         }
     }
-    fn get_true_val(&self, ty: &CompType, fid: u32) -> i64 {
-        match ty {
-            Exact => self.exact_on_true_vals[&fid],
-            Approx => self.approx_on_true_vals[&fid],
-        }
+    pub(crate) fn add_base_case(&mut self, fid: u32, base: Exp) {
+        self.expected.insert(fid, TestCase::new(base, HashMap::default()));
     }
-    fn get_false_val(&self, ty: &CompType, fid: u32) -> i64 {
-        match ty {
-            Exact => self.exact_on_false_vals[&fid],
-            Approx => self.approx_on_false_vals[&fid],
-        }
+    pub(crate) fn add_case_with_loops(&mut self, fid: u32, base: Exp, loops: Vec<(LoopIdx, Exp)>) {
+        self.expected.insert(fid, TestCase::new(base, loops.into_iter().collect()));
     }
 }
 
-pub fn run_test(test_case: TestCase) {
+type LoopIdx = usize;
+type Cost = i64;
+pub struct Exp {
+    exact_on_true: Cost,
+    exact_on_false: Cost,
+    approx_on_true: Cost,
+    approx_on_false: Cost
+}
+impl Exp {
+    pub fn new_exact(
+        exact_on_true: Cost,
+        exact_on_false: Cost
+    ) -> Self {
+        Self { exact_on_true, exact_on_false, approx_on_true: -1, approx_on_false: -1 }
+    }
+    pub fn new(
+        exact_on_true: Cost,
+        exact_on_false: Cost,
+        approx_on_true: Cost,
+        approx_on_false: Cost
+    ) -> Self {
+        Self { exact_on_true, exact_on_false, approx_on_true, approx_on_false }
+    }
+}
+struct TestCase {
+    base: Exp,
+    loops: HashMap<LoopIdx, Exp>
+}
+impl TestCase {
+    pub(crate) fn new(base: Exp, loops: HashMap<LoopIdx, Exp>) -> Self {
+        Self { base, loops }
+    }
+    // fn get_loop_exp(&self, idx: LoopIdx) -> &Exp {
+    //     self.loops.get(&idx).unwrap()
+    // }
+}
+
+pub fn run_test(test_case: Test) {
     if let Err(e) = run_test_internal(&test_case) {
         panic!("Failed to run test `{}`\nError: {}", test_case.name, e);
     }
 }
 
-fn run_test_internal(test: &TestCase) -> anyhow::Result<()> {
+fn run_test_internal(test: &Test) -> anyhow::Result<()> {
     let in_path = format!("{BASE_IN}{}", test.name);
     let out_path = format!("{BASE_OUT}{}", test.name);
     let exp_path = format!("{BASE_EXP}/{}.out", test.name);
@@ -73,16 +95,31 @@ fn run_test_internal(test: &TestCase) -> anyhow::Result<()> {
     let wasm = test_validity(&engine, &out_path)?;
 
     // 2. Run the module, does it run as expected?
+    let mut checked_loops_per_func: HashMap<u32, usize> = HashMap::default();
     for export in wasm.exports() {
         if let ExternType::Func(func_ty) = export.ty() {
             let name = export.name();
-            if let Some((ty, fid)) = get_fid(name) {
-                let exp_gas_true = test.get_true_val(&ty, fid);
-                test_run(name, exp_gas_true, gen_true, &func_ty, &engine, &wasm)?;
-
-                let exp_gas_false = test.get_false_val(&ty, fid);
-                test_run(name, exp_gas_false, gen_false, &func_ty, &engine, &wasm)?;
+            if let Some((ty, fid, loop_idx)) = get_func_metadata(name) {
+                let test_case = test.expected.get(&fid).unwrap();
+                let Exp { exact_on_true: base_true, exact_on_false: base_false, .. } = if let Some(loop_idx) = loop_idx {
+                    checked_loops_per_func.entry(fid).and_modify(|loops| {
+                        *loops += 1;
+                    }).or_insert(1);
+                    &test_case.loops[&loop_idx]
+                } else {
+                    &test_case.base
+                };
+                test_run(name, "on_true", *base_true, gen_true, &func_ty, &engine, &wasm)?;
+                test_run(name, "on_false", *base_false, gen_false, &func_ty, &engine, &wasm)?;
             }
+        }
+    }
+
+    // check that we checked the expected number of generated loop slices.
+    for (fid, case) in test.expected.iter() {
+        let exp_count = case.loops.len();
+        if exp_count > 0 {
+            assert_eq!(exp_count, *checked_loops_per_func.get(&fid).unwrap());
         }
     }
 
@@ -93,7 +130,7 @@ fn test_validity(engine: &Engine, path: &str) -> anyhow::Result<Module> {
     Ok(Module::from_file(engine, path)?)
 }
 
-fn test_run(func_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty: &FuncType, engine: &Engine, wasm: &Module) -> anyhow::Result<()> {
+fn test_run(func_name: &str, case_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty: &FuncType, engine: &Engine, wasm: &Module) -> anyhow::Result<()> {
     // Run each of the exported functions with some input to them (just generate values)
     // Is the output what I expect for each of these values?
     let (instance, mut store) = instantiate(engine, wasm)?;
@@ -112,7 +149,7 @@ fn test_run(func_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty
     let Some(Val::I64(actual_fuel)) = results.get(0) else {
         Err(anyhow::anyhow!("expected fuel to be an i64"))?
     };
-    assert_eq!(exp_fuel, *actual_fuel, "[{func_name}] fuel was not calculated correctly!\n\tRan with: {:?}", args);
+    assert_eq!(exp_fuel, *actual_fuel, "[{func_name}::{case_name}] fuel was not calculated correctly!\n\tRan with: {:?}", args);
 
     Ok(())
 }
@@ -157,19 +194,30 @@ fn instantiate(engine: &Engine, wasm: &Module) -> anyhow::Result<(Instance, Stor
     Ok((instance, store))
 }
 
-fn get_fid(s: &str) -> Option<(CompType, u32)> {
-    // Check for prefixes
-    let prefixes = [Exact.to_string(), Approx.to_string()];
-    for prefix in prefixes.iter() {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            // Try to parse the rest as u32
-            if let Ok(ty) = prefix.parse() {
-                return Some((ty, rest.parse::<u32>().ok()?));
-            }
+fn get_func_metadata(s: &str) -> Option<(CompType, u32, Option<usize>)> {
+    // Determine the type prefix
+    let (ctype, rest) = if let Some(stripped) = s.strip_prefix("exact") {
+        (Exact, stripped)
+    } else if let Some(stripped) = s.strip_prefix("approx") {
+        (Approx, stripped)
+    } else {
+        return None; // Unknown prefix
+    };
 
-        }
-    }
-    None
+    // Split on "_loop_at_" if it exists
+    let parts: Vec<&str> = rest.split("_loop_at_").collect();
+
+    // Parse the u32 immediately following the prefix
+    let number = parts.get(0)?.parse::<u32>().ok()?;
+
+    // Parse the optional loop number
+    let loop_num = if parts.len() > 1 {
+        Some(parts[1].parse::<usize>().ok()?)
+    } else {
+        None
+    };
+
+    Some((ctype, number, loop_num))
 }
 
 struct TestBuffer {
