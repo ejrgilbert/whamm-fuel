@@ -53,39 +53,6 @@ fn test_loads() {
     );
     run_test(test);
 }
-#[test]
-fn test_params() {
-    let mut test = Test::new("params.wasm");
-    test.add_base_case(
-        0,
-        Exp::new_exact(8, 9)
-    );
-    test.add_base_case(
-        1,
-        Exp::new_exact(14, 9)
-    );
-    test.add_base_case(
-        2,
-        Exp::new_exact(7, 7)
-    );
-    test.add_base_case(
-        3,
-        Exp::new_exact(6, 6)
-    );
-    test.add_base_case(
-        4,
-        Exp::new_exact(6, 6)
-    );
-    test.add_base_case(
-        5,
-        Exp::new_exact(41, 41)
-    );
-    test.add_base_case(
-        6,
-        Exp::new_exact(2, 2)
-    );
-    run_test(test);
-}
 
 // TODO -- get this test case passing!
 #[test]
@@ -126,5 +93,59 @@ fn test_mem_ops2() {
         Exp::new_exact(8, 8)
     );
 
+    run_test(test);
+}
+#[test]
+fn test_params() {
+    let mut test = Test::new("params.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(8, 9)
+    );
+    test.add_base_case(
+        1,
+        Exp::new_exact(14, 9)
+    );
+    test.add_base_case(
+        2,
+        Exp::new_exact(7, 7)
+    );
+    test.add_base_case(
+        3,
+        Exp::new_exact(6, 6)
+    );
+    test.add_base_case(
+        4,
+        Exp::new_exact(6, 6)
+    );
+    test.add_base_case(
+        5,
+        Exp::new_exact(41, 41)
+    );
+    test.add_base_case(
+        6,
+        Exp::new_exact(2, 2)
+    );
+    run_test(test);
+}
+
+#[test]
+fn test_params_edge1() {
+    let mut test = Test::new("params-edge1.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(3, 3)
+    );
+    // The input conditional gets flipped! The way we're passing
+    // state is incorrect, it should be pulled from the
+    // local.get/global.get directly! Not the eventual value!
+    test.add_base_case(
+        1,
+        Exp::new_exact(11, 7)
+    );
+    test.add_base_case(
+        2,
+        Exp::new_exact(3, 3)
+    );
     run_test(test);
 }
