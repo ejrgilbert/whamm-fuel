@@ -6,7 +6,7 @@ use wirm::iterator::iterator_trait::Iterator;
 use wirm::wasmparser::Operator;
 use crate::utils::stack_effects;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub enum Origin {
     /// Value produced by an instruction index
     Instr {
@@ -38,6 +38,7 @@ pub enum Origin {
     },
 
     /// Unknown / external / untracked
+    #[default]
     Untracked
 }
 
@@ -88,33 +89,28 @@ struct FuncTaint {
 }
 impl FuncTaint {
     fn new(wasm: &Module, fid: FunctionID) -> FuncTaint {
-        let tid = wasm.functions.get(fid).get_type_id();
-        let (total_params, total_results) = if let Some(Types::FuncType { params , results, ..}) = wasm.types.get(tid) {
-            (params.len(), results.len())
-        } else {
+        // number of locals is total_params + num_locals!
+        let lf = wasm.functions.unwrap_local(FunctionID(*fid));
+        let Some(Types::FuncType { params: total_params, results: total_results , ..}) = wasm.types.get(lf.ty_id) else {
             panic!("Should have found a function type!");
         };
+        let total_locals = total_params.len() + lf.body.num_locals as usize;
 
         Self {
             fid: *fid,
-            local_origin: vec![],
-            total_params,
-            total_results,
+            local_origin: vec![Origin::default(); total_locals],
+            total_params: total_params.len(),
+            total_results: total_results.len(),
             ..Default::default()
         }
     }
 
-    fn get_local_origin(&self, i: u32, instr_idx: usize) -> Origin {
-        self.local_origin
-            .get(i as usize)
-            .cloned()
-            .unwrap_or(
-                if i < self.total_params as u32 {
-                    Origin::Param {instr_idx, lid: i}
-                } else {
-                    Origin::Untracked
-                }
-            )
+    fn get_local_origin(&mut self, i: u32, instr_idx: usize) -> Origin {
+        if i < self.total_params as u32 {
+            Origin::Param {instr_idx, lid: i}
+        } else {
+            self.local_origin[i as usize].clone()
+        }
     }
 
     fn set_local_origin(&mut self, i: u32, origins: Origin) {
