@@ -5,6 +5,21 @@ mod utils;
 // NOTE: All of these test programs are expected to be located in the folder: `tests/programs`
 
 #[test]
+fn test_add() {
+    let mut test = Test::new("add.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(1, 1)
+    );
+    test.add_base_case(
+        1,
+        Exp::new_exact(4, 4)
+    );
+
+    run_test(test);
+}
+
+#[test]
 fn test_calls() {
     let mut test = Test::new("calls.wasm");
     test.add_base_case(
@@ -69,5 +84,47 @@ fn test_params() {
         6,
         Exp::new_exact(2, 2)
     );
+    run_test(test);
+}
+
+// TODO -- get this test case passing!
+#[test]
+fn test_malloc_init() {
+    let mut test = Test::new("malloc_init.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(2, 2)
+    );
+    test.add_base_case(
+        1,
+        Exp::new_exact(5, 5)
+    );
+
+    run_test(test);
+}
+
+#[test]
+fn test_mem_ops() {
+    let mut test = Test::new("mem-ops.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(8, 8)
+    );
+    test.add_base_case(
+        1,
+        Exp::new_exact(2, 2)
+    );
+
+    run_test(test);
+}
+
+#[test]
+fn test_mem_ops2() {
+    let mut test = Test::new("mem-ops2.wasm");
+    test.add_base_case(
+        0,
+        Exp::new_exact(8, 8)
+    );
+
     run_test(test);
 }

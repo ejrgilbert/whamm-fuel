@@ -1,0 +1,26 @@
+================
+==== SLICES ====
+================
+function #0 (0 instructions in slice):
+    the function slice:
+        	! >>1
+        0	  End
+
+function #1 (0 instructions in slice):
+    the function slice:
+        0	  Call { function_index: 0 }
+        1	  Call { function_index: 0 }
+        2	  Call { function_index: 0 }
+        	! >>4
+        3	  End
+
+=====================
+==== FID MAPPING ====
+=====================
+0 -> 0:exact0
+1 -> 1:exact1
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/add.wasm
