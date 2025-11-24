@@ -99,24 +99,20 @@ fn test_run(func_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty
     let (instance, mut store) = instantiate(engine, wasm)?;
 
     let mut args = Vec::new();
+    let mut results = vec![Val::I64(0)];
     // Optionally, get the function from the instance
     if let Some(func) = instance.get_func(&mut store, func_name) {
         for dt in func_ty.params() {
             args.push(gen_val(dt));
         }
-        let mut results = Vec::new();
         func.call(&mut store, &mut args, &mut results)?;
     }
 
     // to check the fuel amount:
-    let global = instance
-        .get_global(&mut store, FUEL_EXPORT)
-        .ok_or_else(|| anyhow::anyhow!("missing global"))?;
-
-    let Val::I64(actual_fuel) = global.get(&mut store) else {
+    let Some(Val::I64(actual_fuel)) = results.get(0) else {
         Err(anyhow::anyhow!("expected fuel to be an i64"))?
     };
-    assert_eq!(INIT_FUEL - exp_fuel, actual_fuel, "[{func_name}] fuel was not calculated correctly!\n\tRan with: {:?}", args);
+    assert_eq!(exp_fuel, *actual_fuel, "[{func_name}] fuel was not calculated correctly!\n\tRan with: {:?}", args);
 
     Ok(())
 }
