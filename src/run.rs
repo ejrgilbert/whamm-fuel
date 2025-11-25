@@ -54,7 +54,7 @@ pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_path: &str)
     // create the slices
     let mut slices = slice_program(&func_taints, &wasm);
     save_structure(&mut slices, &func_taints, &wasm);
-    // reduce_slice(&mut slices, &func_taints, &wasm);
+    reduce_slice(&mut slices, &func_taints, &wasm);
 
     // generate code for the slices (leave placeholders for the cost calculation)
     let mut gen_wasm = Module::default();

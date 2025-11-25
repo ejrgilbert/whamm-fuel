@@ -289,7 +289,6 @@ pub fn save_structure(slices: &mut [SliceResult], funcs: &[FuncState], wasm: &Mo
         for (_instr_idx, slice) in result.slices.iter_mut() {
             let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
 
-            // let mut new_func = FunctionBuilder::new(params, results);
             let body = &lf.body.instructions;
             let mut state = IdentifyStructure::default();     // one instance of state per function!
 
