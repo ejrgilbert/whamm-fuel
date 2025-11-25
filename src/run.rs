@@ -114,8 +114,8 @@ fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<Gener
             print_fid(&mut out, &format!("{new_fid}:{fname}"));
 
             tabs += 1;
-            print_params_for_state_req(&mut out, tabs, "PARAMS", for_params)?;
-            print_params_for_state_req(&mut out, tabs, "GLOBALS", for_globals)?;
+            print_params_for_state_req(&mut out, tabs, "LOCAL.GET (for a param)", for_params)?;
+            print_params_for_state_req(&mut out, tabs, "GLOBAL.GET", for_globals)?;
             print_params_for_state_req(&mut out, tabs, "LOADS", for_loads)?;
             print_call_params_for_state_req(&mut out, tabs, "CALLS", for_calls)?;
             print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", for_call_indirects)?;
@@ -163,6 +163,14 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
             let mut tabs = 0;
             print_state_taint(&mut out, &slice.params, result.total_params, "params", &mut tabs)?;
             print_state_taint(&mut out, &slice.globals, num_globals, "global", &mut tabs)?;
+            print_instr_taint(&mut out, &slice.params
+                .iter()
+                .map(|((_, index), value)| (*index, value.clone()))
+                .collect(), "local.get", &mut tabs)?;
+            print_instr_taint(&mut out, &slice.globals
+                .iter()
+                .map(|((_, index), value)| (*index, value.clone()))
+                .collect(), "global.get", &mut tabs)?;
             print_instr_taint(&mut out, &slice.loads, "load", &mut tabs)?;
             print_call_taint(&mut out, &slice.calls, "calls", &mut tabs)?;
             print_call_taint(&mut out, &slice.call_indirects, "call_indirects", &mut tabs)?;
@@ -196,14 +204,19 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
     }
     Ok(())
 }
-fn print_state_taint<W: WriteColor>(mut out: W, taint: &HashMap<u32, DataType>, out_of: usize, ty: &str, tabs: &mut i32) -> io::Result<()> {
+fn print_state_taint<W: WriteColor>(mut out: W, taint: &HashMap<(u32, usize), DataType>, out_of: usize, ty: &str, tabs: &mut i32) -> io::Result<()> {
     *tabs += 1;
     if !taint.is_empty() {
         writeln!(out, "{}the {ty} taint:", tab(*tabs))?;
         write!(out, "{}", tab(*tabs))?;
 
+        let keys_u32: Vec<u32> = taint
+            .keys()                // iterate over keys: &(u32, usize)
+            .map(|(id, _)| *id)    // extract the u32 part
+            .collect();
+
         for i in 0..out_of {
-            let tainted = taint.contains_key(&(i as u32));
+            let tainted = keys_u32.contains(&(i as u32));
             let s = format!(" {}{i},", if tainted { "*" } else { " " });
             if tainted {
                 print_tainted(&mut out, &s);

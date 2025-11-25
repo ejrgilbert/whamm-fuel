@@ -26,8 +26,8 @@ pub struct GeneratedFunc {
 
     // Maps from dependency index -> generated local ID for each
     // of the types of program state the slice can depend on.
-    pub for_params: HashMap<u32, u32>,
-    pub for_globals: HashMap<u32, u32>,
+    pub for_params: HashMap<usize, u32>,
+    pub for_globals: HashMap<usize, u32>,
     pub for_loads: HashMap<usize, u32>,
     pub for_calls: HashMap<usize, CallState>,
     pub for_call_indirects: HashMap<usize, CallState>,
@@ -51,8 +51,8 @@ pub struct CallState { pub used_arg: usize, pub gen_param_id: u32 }
 struct CodeGen {
     // Maps from dependency index -> generated local ID for each
     // of the types of program state the slice can depend on.
-    for_params: HashMap<u32, u32>,
-    for_globals: HashMap<u32, u32>,
+    for_params: HashMap<usize, u32>,
+    for_globals: HashMap<usize, u32>,
     for_loads: HashMap<usize, u32>,
     for_calls: HashMap<usize, CallState>,
     for_call_indirects: HashMap<usize, CallState>,
@@ -68,8 +68,12 @@ impl CodeGen {
     fn new(slice: &Slice) -> (Self, Vec<DataType>) {
         let mut used_params = Vec::new();
 
-        let for_params = process_needed_state(&slice.params, &mut used_params);
-        let for_globals = process_needed_state(&slice.globals, &mut used_params);
+        let for_params = process_needed_state(&slice.params.iter()
+            .map(|((_, index), value)| (*index, value.clone()))
+            .collect(), &mut used_params);
+        let for_globals = process_needed_state(&slice.globals.iter()
+            .map(|((_, index), value)| (*index, value.clone()))
+            .collect(), &mut used_params);
         let for_loads = process_needed_state(&slice.loads, &mut used_params);
         let for_calls = process_needed_call(&slice.calls, &mut used_params);
         let for_call_indirects = process_needed_call(&slice.call_indirects, &mut used_params);
@@ -313,15 +317,11 @@ fn gen_fuel_comp_approx(_fuel: &LocalID, _state: &mut CodeGen, _func: &mut Funct
 
 // Translate instructions into `local.get` on parameter representing that state! (if necessary)
 fn gen_op<'a, 'b>(opidx: usize, op: &Operator<'a>, fuel: &LocalID, gen_state: &CodeGen, func: &mut FunctionBuilder<'b>) where 'a : 'b {
-    // Handle opcodes that lookup vars by their ID in the original program.
-    if let Operator::LocalGet {local_index: id} = op {
-        if let Some(new_id) = gen_state.for_params.get(id) {
-            func.local_get(LocalID(*new_id));
-        }
-    } else if let Operator::GlobalGet {global_index: id} = op {
-        if let Some(new_id) = gen_state.for_globals.get(id) {
-            func.local_get(LocalID(*new_id));
-        }
+    if let Some(new_id) = gen_state.for_params.get(&opidx) {
+        func.local_get(LocalID(*new_id));
+    }
+    else if let Some(new_id) = gen_state.for_globals.get(&opidx) {
+        func.local_get(LocalID(*new_id));
     }
 
     // Handle opcodes that have relevant program state (memory, calls, etc.)

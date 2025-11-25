@@ -20,6 +20,8 @@ function #0 (0 instructions in slice):
 function #0 (2 instructions in slice):
     the global taint:
      *0,
+    the global.get instrs influencing CF:
+     *7,
     the function slice:
         0	  I32Const { value: 1 }
         1	  GlobalSet { global_index: 0 }
@@ -40,8 +42,8 @@ function #0 (2 instructions in slice):
 =====================
 0 -> 0:exact0
 0 -> 1:exact0_loop_at_2
-    ---- Requested GLOBALS:
-    0 is @param0
+    ---- Requested GLOBAL.GET:
+    7 is @param0
 
 
 ====================

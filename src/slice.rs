@@ -38,12 +38,13 @@ pub struct Slice {
     pub(crate) instrs: HashSet<usize>,
     /// all instruction indices that are included for support purposes (block structure)
     pub(crate) instrs_support: HashSet<usize>,
-    /// function parameter indices that influence control
+    /// local.get instruction indices that tie back to a
+    /// function parameter that influence control
     /// remembers the parameter type as well.
-    pub(crate) params: HashMap<u32, DataType>,
-    /// global indices (global.get) that influence control
-    /// remembers the global's type as well.
-    pub(crate) globals: HashMap<u32, DataType>,
+    pub(crate) params: HashMap<(u32, usize), DataType>,         // (local_id, instr_idx) -> datatype
+    /// global.get instruction indices that influence control
+    /// remembers the parameter type as well.
+    pub(crate) globals: HashMap<(u32, usize), DataType>,        // (local_id, instr_idx) -> datatype
     /// load instruction indices that influence control
     /// remembers the value's type as well.
     pub(crate) loads: HashMap<usize, DataType>,
@@ -79,8 +80,9 @@ fn slice(result: &mut SliceResult, fid: u32, spec_name: String, true_start: usiz
     // Start from control instructions' inputs
     let mut worklist: VecDeque<Origin> = VecDeque::new();
     let mut included_instrs: HashSet<usize> = HashSet::new();
-    let mut included_params: HashMap<u32, DataType> = HashMap::new();
-    let mut included_globals: HashMap<u32, DataType> = HashMap::new();
+    // TODO -- track this as included instruction results! Not as the value at the end of a function!
+    let mut included_params: HashMap<(u32, usize), DataType> = HashMap::new();
+    let mut included_globals: HashMap<(u32, usize), DataType> = HashMap::new();
     let mut included_loads: HashMap<usize, DataType> = HashMap::new();
     let mut included_calls: HashMap<(usize, usize), DataType> = HashMap::new(); // the call_idx AND the result_idx used
     let mut included_call_indirects: HashMap<(usize, usize), DataType> = HashMap::new();
@@ -199,14 +201,14 @@ fn slice(result: &mut SliceResult, fid: u32, spec_name: String, true_start: usiz
                 GlobalKind::Import(ImportedGlobal {ty, ..})) = kind;
                 let global_ty = DataType::from(ty.content_type);
 
-                included_globals.insert(gid, global_ty);
+                included_globals.insert((gid, instr_idx), global_ty);
                 // also include the instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }
 
             Origin::Param{lid, instr_idx} => {
                 let param_ty = *func_params.get(lid as usize).unwrap();
-                included_params.insert(lid, param_ty);
+                included_params.insert((lid, instr_idx), param_ty);
                 // also include the instruction index in the instr set
                 included_instrs.insert(instr_idx);
             }

@@ -11,6 +11,8 @@ function #0 (0 instructions in slice):
 function #1 (3 instructions in slice):
     the params taint:
      *0,
+    the local.get instrs influencing CF:
+     *4,
     the function slice:
         0	* Block { blockty: Empty }
         1	  LocalGet { local_index: 0 }
@@ -39,8 +41,8 @@ function #2 (0 instructions in slice):
 =====================
 0 -> 0:exact0
 1 -> 1:exact1
-    ---- Requested PARAMS:
-    0 is @param0
+    ---- Requested LOCAL.GET (for a param):
+    4 is @param0
 
 2 -> 2:exact2
 

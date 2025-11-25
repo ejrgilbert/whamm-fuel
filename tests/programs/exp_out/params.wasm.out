@@ -4,6 +4,8 @@
 function #0 (8 instructions in slice):
     the params taint:
      *0,
+    the local.get instrs influencing CF:
+     *2,
     the function slice:
         0	* Block { blockty: Empty }
         1	* Block { blockty: Empty }
@@ -30,6 +32,8 @@ function #0 (8 instructions in slice):
 function #1 (14 instructions in slice):
     the params taint:
      *0,
+    the local.get instrs influencing CF:
+     *3, *7,
     the function slice:
         0	* Block { blockty: Empty }
         1	* Block { blockty: Empty }
@@ -67,6 +71,8 @@ function #1 (14 instructions in slice):
 function #2 (7 instructions in slice):
     the params taint:
      *0,
+    the local.get instrs influencing CF:
+     *3,
     the function slice:
         0	* Block { blockty: Empty }
         1	* Block { blockty: Empty }
@@ -92,6 +98,8 @@ function #2 (7 instructions in slice):
 
 function #3 (6 instructions in slice):
     the params taint:
+     *0,
+    the local.get instrs influencing CF:
      *0,
     the function slice:
         0	* LocalGet { local_index: 0 }
@@ -179,19 +187,20 @@ function #6 (0 instructions in slice):
 ==== FID MAPPING ====
 =====================
 0 -> 0:exact0
-    ---- Requested PARAMS:
-    0 is @param0
+    ---- Requested LOCAL.GET (for a param):
+    2 is @param0
 
 1 -> 1:exact1
-    ---- Requested PARAMS:
-    0 is @param0
+    ---- Requested LOCAL.GET (for a param):
+    7 is @param1
+    3 is @param0
 
 2 -> 2:exact2
-    ---- Requested PARAMS:
-    0 is @param0
+    ---- Requested LOCAL.GET (for a param):
+    3 is @param0
 
 3 -> 3:exact3
-    ---- Requested PARAMS:
+    ---- Requested LOCAL.GET (for a param):
     0 is @param0
 
 4 -> 4:exact4
