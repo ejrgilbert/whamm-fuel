@@ -78,10 +78,13 @@ impl CodeGen {
         let for_calls = process_needed_call(&slice.calls, &mut used_params);
         let for_call_indirects = process_needed_call(&slice.call_indirects, &mut used_params);
 
-        fn process_needed_state<T: Clone + Eq + Hash>(needed_state: &HashMap<T, DataType>, used_params: &mut Vec<DataType>) -> HashMap<T, u32> {
+        fn process_needed_state<T: Clone + Eq + Hash + Ord>(needed_state: &HashMap<T, DataType>, used_params: &mut Vec<DataType>) -> HashMap<T, u32> {
             let mut res = HashMap::default();
-            for (s, dt) in needed_state.iter() {
-                res.insert(s.clone(), used_params.len() as u32);
+            let mut sorted: Vec<&T> = needed_state.keys().collect();
+            sorted.sort();
+            for key in sorted.iter() {
+                let dt = needed_state.get(*key).unwrap();
+                res.insert((*key).clone(), used_params.len() as u32);
                 used_params.push(*dt);
             }
             res
@@ -181,7 +184,7 @@ fn gen_func<'a, 'b>(true_start_idx: usize, spec_name: &str, cost_map: &mut HashM
 
         let op = &body[i];
 
-        let in_slice = slice.instrs.contains(&true_instr_idx);
+        let in_slice = slice.max_slice.contains(&true_instr_idx);
         let in_support = slice.instrs_support.contains(&true_instr_idx);
         let do_fuel_before = calc_op_cost(in_slice | in_support, i == body.len() - 1, op, &mut state);
 

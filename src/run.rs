@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
 use std::io;
 use std::iter::zip;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use wirm::ir::id::FunctionID;
 use wirm::{DataType, Module};
 use crate::analyze::{analyze, FuncState};
 use crate::codegen::{codegen, CallState, CodeGenResult, GeneratedFunc};
+use crate::reduce::reduce_slice;
 use crate::slice::{save_structure, slice_program, SliceResult};
 use crate::utils::{FUEL_COMPUTATION, SPACE_PER_TAB};
 
@@ -52,6 +54,7 @@ pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_path: &str)
     // create the slices
     let mut slices = slice_program(&func_taints, &wasm);
     save_structure(&mut slices, &func_taints, &wasm);
+    // reduce_slice(&mut slices, &func_taints, &wasm);
 
     // generate code for the slices (leave placeholders for the cost calculation)
     let mut gen_wasm = Module::default();
@@ -127,11 +130,14 @@ fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<Gener
     Ok(())
 }
 
-fn print_params_for_state_req<T: Debug, W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<T, u32>) -> io::Result<()> {
+fn print_params_for_state_req<T: Debug + Ord + Hash, W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<T, u32>) -> io::Result<()> {
     if !map.is_empty() {
         writeln!(out, )?;
         writeln!(out, "{}---- Requested {name}:", tab(tabs))?;
-        for (orig, new) in map.iter() {
+        let mut sorted: Vec<&T> = map.keys().collect();
+        sorted.sort();
+        for orig in sorted.iter() {
+            let new = map.get(*orig).unwrap();
             writeln!(out, "{}{:?} is @param{}", tab(tabs), orig, new)?;
         }
     }
@@ -158,7 +164,7 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
         for instr_index in sorted.iter() {
             let slice = &result.slices[*instr_index];
 
-            writeln!(out, "function #{} ({} instructions in slice):", result.fid, slice.instrs.len())?;
+            writeln!(out, "function #{} ({} instructions in slice):", result.fid, slice.max_slice.len())?;
             let body = &wasm.functions.unwrap_local(FunctionID(func.fid)).body.instructions;
             let mut tabs = 0;
             print_state_taint(&mut out, &slice.params, result.total_params, "params", &mut tabs)?;
@@ -181,7 +187,7 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
             tabs += 1;
             for i in 0..body.len() {
                 let cost = cost_map.get(&i);
-                let in_slice = slice.instrs.contains(&i);
+                let in_slice = slice.max_slice.contains(&i);
                 let in_support = slice.instrs_support.contains(&i);
 
                 if let Some(cost) = cost {

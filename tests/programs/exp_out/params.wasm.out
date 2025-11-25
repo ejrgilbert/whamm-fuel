@@ -192,8 +192,8 @@ function #6 (0 instructions in slice):
 
 1 -> 1:exact1
     ---- Requested LOCAL.GET (for a param):
-    7 is @param1
     3 is @param0
+    7 is @param1
 
 2 -> 2:exact2
     ---- Requested LOCAL.GET (for a param):

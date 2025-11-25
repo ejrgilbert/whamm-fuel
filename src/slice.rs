@@ -34,8 +34,10 @@ pub struct Slice {
     pub(crate) start_instr_idx: usize,  // (inclusive)
     pub(crate) end_instr_idx: usize,    // (exclusive)
     pub(crate) spec_name: String,
-    /// all instruction indices that are in the backward slice (influencing control).
-    pub(crate) instrs: HashSet<usize>,
+    /// all instruction indices that are in the MAXIMAL backward slice (influencing control).
+    pub(crate) max_slice: HashSet<usize>,
+    /// all instruction indices that are in the MINIMAL backward slice (influencing control).
+    pub(crate) min_slice: HashSet<usize>,
     /// all instruction indices that are included for support purposes (block structure)
     pub(crate) instrs_support: HashSet<usize>,
     /// local.get instruction indices that tie back to a
@@ -223,7 +225,7 @@ fn slice(result: &mut SliceResult, fid: u32, spec_name: String, true_start: usiz
             start_instr_idx: true_start,
             end_instr_idx: true_start + instrs_info.len(),
             spec_name,
-            instrs: included_instrs,
+            max_slice: included_instrs,
             params: included_params,
             globals: included_globals,
             loads: included_loads,
@@ -286,23 +288,15 @@ pub fn save_structure(slices: &mut [SliceResult], funcs: &[FuncState], wasm: &Mo
     for (result, func) in slices.iter_mut().zip(funcs.iter()) {
         for (_instr_idx, slice) in result.slices.iter_mut() {
             let lf = wasm.functions.unwrap_local(FunctionID(func.fid));
-            let Some(Types::FuncType { params , results, ..}) = wasm.types.get(lf.ty_id) else {
-                panic!("Should have found a function type!");
-            };
 
-            let mut new_func = FunctionBuilder::new(params, results);
+            // let mut new_func = FunctionBuilder::new(params, results);
             let body = &lf.body.instructions;
             let mut state = IdentifyStructure::default();     // one instance of state per function!
 
             for (i, op) in body.get_ops().iter().enumerate() {
-                let in_slice = slice.instrs.contains(&i);
+                let in_slice = slice.max_slice.contains(&i);
                 let support_ops = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
                 slice.instrs_support.extend(support_ops);
-
-                if in_slice {
-                    // put this opcode in the generated function
-                    new_func.inject(op.clone());
-                }
             }
         }
     }
