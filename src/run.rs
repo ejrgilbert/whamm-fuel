@@ -187,7 +187,8 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
             tabs += 1;
             for i in 0..body.len() {
                 let cost = cost_map.get(&i);
-                let in_slice = slice.max_slice.contains(&i);
+                let in_max_slice = slice.max_slice.contains(&i);
+                let in_min_slice = slice.min_slice.contains(&i);
                 let in_support = slice.instrs_support.contains(&i);
 
                 if let Some(cost) = cost {
@@ -195,9 +196,11 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
                     print_cost(&mut out, &s);
                 }
 
-                let mark = if in_slice { "*" } else if in_support { "~" } else { " " };
+                let mark = if in_min_slice { "*" } else if in_max_slice { "+" } else if in_support { "~" } else { " " };
                 let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
-                if in_slice {
+                if in_min_slice {
+                    print_min(&mut out, &s);
+                } else if in_max_slice {
                     print_tainted(&mut out, &s);
                 } else if in_support {
                     print_support(&mut out, &s);
@@ -270,6 +273,9 @@ fn print_call_taint<W: WriteColor>(mut out: W, calls: &HashMap<(usize, usize), D
 
 const WRITE_ERR: &str = "Uh oh, something went wrong while printing to terminal";
 
+fn print_min<W: WriteColor>(out: W, s: &str) {
+    print_color(out, s, yellow);
+}
 fn print_tainted<W: WriteColor>(out: W, s: &str) {
     print_color(out, s, green);
 }
