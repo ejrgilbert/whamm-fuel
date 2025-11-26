@@ -9,7 +9,8 @@ use anyhow::bail;
 use termcolor::{ColorChoice, StandardStream};
 use crate::run::do_analysis;
 
-const OUTPUT: &str = "output.wasm";
+const OUTPUT_MAX: &str = "output-max.wasm";
+const OUTPUT_MIN: &str = "output-min.wasm";
 
 /// Conservative static taint-slicing for WebAssembly.
 ///
@@ -37,6 +38,6 @@ fn main() -> anyhow::Result<()> {
     let data = std::fs::read(&args[1])?;
 
     let stdout = StandardStream::stdout(ColorChoice::Always);
-    do_analysis(stdout, &data, OUTPUT)?;
+    do_analysis(stdout, &data, OUTPUT_MAX, OUTPUT_MIN)?;
     Ok(())
 }

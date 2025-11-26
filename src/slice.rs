@@ -1,10 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use wirm::ir::function::FunctionBuilder;
 use wirm::ir::id::{FunctionID, GlobalID, TypeID};
 use wirm::ir::module::module_types::Types;
 use wirm::{DataType, Module};
 use wirm::ir::module::module_globals::{GlobalKind, ImportedGlobal, LocalGlobal};
-use wirm::opcode::Inject;
 use wirm::wasmparser::Operator;
 use crate::analyze::{FuncState, InstrInfo, OpKind, Origin};
 use crate::utils::{find_subsection_end, is_branching_op, is_loop};
@@ -58,6 +56,9 @@ pub struct Slice {
     /// AND the actually-used result of that call
     /// remembers the value's type as well.
     pub(crate) call_indirects: HashMap<(usize, usize), DataType>,
+
+    /// This is for the minimum slice, stores the needed `taken` state
+    pub(crate) taken: HashMap<usize, DataType>,
 }
 
 pub fn slice_program(func_taints: &[FuncState], wasm: &Module) -> Vec<SliceResult> {

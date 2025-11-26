@@ -10,7 +10,9 @@ use termcolor::{Color, ColorSpec, WriteColor};
 use wirm::ir::id::FunctionID;
 use wirm::{DataType, Module};
 use crate::analyze::{analyze, FuncState};
-use crate::codegen::{codegen, CallState, CodeGenResult, GeneratedFunc};
+use crate::codegen::{CodeGenResult, GeneratedFunc, ReqState, StateType};
+use crate::codegen::max::codegen_max;
+use crate::codegen::min::codegen_min;
 use crate::reduce::reduce_slice;
 use crate::slice::{save_structure, slice_program, SliceResult};
 use crate::utils::{FUEL_COMPUTATION, SPACE_PER_TAB};
@@ -45,7 +47,7 @@ impl FromStr for CompType {
 
 /// Compute backward slice of values that feed control-flow ops inside a function body.
 /// - `num_params`: number of parameters (so we can mark `local.get` of param indices as Param).
-pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_path: &str) -> anyhow::Result<()> {
+pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_max_path: &str, out_min_path: &str) -> anyhow::Result<()> {
     // Read app Wasm into Wirm module
     let mut wasm = Module::parse(wasm_bytes, false, true).unwrap();
 
@@ -56,16 +58,22 @@ pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_path: &str)
     save_structure(&mut slices, &func_taints, &wasm);
     reduce_slice(&mut slices, &func_taints, &wasm);
 
-    // generate code for the slices (leave placeholders for the cost calculation)
-    let mut gen_wasm = Module::default();
-    let CodeGenResult { cost_maps, func_map } = codegen(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm);
+    // MAX: generate code for the slices (leave placeholders for the cost calculation)
+    let mut gen_wasm_max = Module::default();
+    let CodeGenResult { cost_maps: cost_maps_max, func_map: func_map_min } = codegen_max(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm_max);
+
+    // MIN: generate code for the slices (leave placeholders for the cost calculation)
+    // TODO: Fix the types
+    let mut gen_wasm_min = Module::default();
+    let CodeGenResult { cost_maps, func_map } = codegen_min(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm_min);
 
     // Flush state
-    flush_slices(&mut out, wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm)?;
-    flush_fid_mapping(&mut out, &func_map)?;
+    flush_slices(&mut out, wasm.globals.len(), &slices, &func_taints, &cost_maps_max, &wasm)?;
+    flush_fid_mapping(&mut out, &func_map_min)?;
 
     // Write the generated wasm to the output file
-    write_bytes(&mut out, &gen_wasm.encode(), out_path)?;
+    write_bytes(&mut out, &gen_wasm_max.encode(), out_max_path)?;
+    write_bytes(&mut out, &gen_wasm_min.encode(), out_min_path)?;
     Ok(())
 }
 
@@ -106,22 +114,18 @@ fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<Gener
         for GeneratedFunc {
             fid: new_fid,
             fname,
-            for_params,
-            for_globals,
-            for_loads,
-            for_calls,
-            for_call_indirects
+            req_state
         } in fid_map.get(*fid).unwrap().iter() {
             let mut tabs = 0;
             write!(out, "{fid} -> ")?;
             print_fid(&mut out, &format!("{new_fid}:{fname}"));
 
             tabs += 1;
-            print_params_for_state_req(&mut out, tabs, "LOCAL.GET (for a param)", for_params)?;
-            print_params_for_state_req(&mut out, tabs, "GLOBAL.GET", for_globals)?;
-            print_params_for_state_req(&mut out, tabs, "LOADS", for_loads)?;
-            print_call_params_for_state_req(&mut out, tabs, "CALLS", for_calls)?;
-            print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", for_call_indirects)?;
+            print_params_for_state_req(&mut out, tabs, "LOCAL.GET (for a param)", req_state.get(&StateType::Param).unwrap())?;
+            print_params_for_state_req(&mut out, tabs, "GLOBAL.GET", req_state.get(&StateType::Global).unwrap())?;
+            print_params_for_state_req(&mut out, tabs, "LOADS", req_state.get(&StateType::Load).unwrap())?;
+            print_call_params_for_state_req(&mut out, tabs, "CALLS", req_state.get(&StateType::Call).unwrap())?;
+            print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", req_state.get(&StateType::CallIndirect).unwrap())?;
 
             writeln!(out, )?;
         }
@@ -130,25 +134,30 @@ fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<Gener
     Ok(())
 }
 
-fn print_params_for_state_req<T: Debug + Ord + Hash, W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<T, u32>) -> io::Result<()> {
+fn print_params_for_state_req<T: Debug + Ord + Hash, W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<T, ReqState>) -> io::Result<()> {
     if !map.is_empty() {
         writeln!(out, )?;
         writeln!(out, "{}---- Requested {name}:", tab(tabs))?;
         let mut sorted: Vec<&T> = map.keys().collect();
         sorted.sort();
         for orig in sorted.iter() {
-            let new = map.get(*orig).unwrap();
-            writeln!(out, "{}{:?} is @param{}", tab(tabs), orig, new)?;
+            let reqs = map.get(*orig).unwrap().req_state.first().unwrap();
+            writeln!(out, "{}{:?} is @param{}", tab(tabs), orig, reqs.gen_param_id())?;
         }
     }
     Ok(())
 }
-fn print_call_params_for_state_req<W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<usize, CallState>) -> io::Result<()> {
+fn print_call_params_for_state_req<W: WriteColor>(mut out: W, tabs: i32, name: &str, map: &HashMap<usize, ReqState>) -> io::Result<()> {
     if !map.is_empty() {
         writeln!(out, )?;
         writeln!(out, "{}---- Requested {name}:", tab(tabs))?;
-        for (orig, CallState {used_arg, gen_param_id}) in map.iter() {
-            writeln!(out, "{}{orig},arg{used_arg} is @param{gen_param_id}", tab(tabs))?;
+        for (orig, reqs) in map.iter() {
+            // let mut reqs = String::new();
+            // for (i, r) in req_state.iter().enumerate() {
+            //     let comma = if i == 0 { "" } else { "," };
+            //     reqs.push_str(&format!("{comma}{r}"));
+            // }
+            writeln!(out, "{}{orig}: {reqs}", tab(tabs))?;
         }
     }
     Ok(())
