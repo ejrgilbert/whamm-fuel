@@ -12,7 +12,7 @@ function #0 (0 instructions in slice):
         6	  GlobalSet { global_index: 0 }
         7	  GlobalGet { global_index: 0 }
         	! >>6
-        8	  BrIf { relative_depth: 0 }
+        8	- BrIf { relative_depth: 0 }
         9	  End
         	! >>4
         10	  End
@@ -30,23 +30,40 @@ function #0 (2 instructions in slice):
         4	  I32Const { value: 1 }
         5	  I32Sub
         6	  GlobalSet { global_index: 0 }
-        7	* GlobalGet { global_index: 0 }
+        7	+ GlobalGet { global_index: 0 }
         	! >>6
-        8	* BrIf { relative_depth: 0 }
+        8	- BrIf { relative_depth: 0 }
         9	~ End
         	! >>4
         10	  End
 
-=====================
-==== FID MAPPING ====
-=====================
+===========================
+==== FID MAPPING (max) ====
+===========================
 0 -> 0:exact0
 0 -> 1:exact0_loop_at_2
     ---- Requested GLOBAL.GET:
     7 is @param0
 
 
+===========================
+==== FID MAPPING (min) ====
+===========================
+0 -> 0:exact0
+    ---- Requested TAKEN (for a branch):
+    8 is @param0
+
+0 -> 1:exact0_loop_at_2
+    ---- Requested TAKEN (for a branch):
+    8 is @param0
+
+
 ====================
 ==== FLUSH WASM ====
 ====================
-Wrote generated Wasm to output/tests/globals.wasm
+Wrote generated Wasm to output/tests/globals-max.wasm
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/globals-min.wasm

@@ -1,95 +1,95 @@
 ================
 ==== SLICES ====
 ================
-function #0 (8 instructions in slice):
+function #0 (6 instructions in slice):
     the params taint:
      *0,
     the local.get instrs influencing CF:
      *2,
     the function slice:
-        0	* Block { blockty: Empty }
-        1	* Block { blockty: Empty }
-        2	* LocalGet { local_index: 0 }
-        3	* I64Const { value: 1 }
-        4	* I64Eq
+        0	~ Block { blockty: Empty }
+        1	~ Block { blockty: Empty }
+        2	+ LocalGet { local_index: 0 }
+        3	+ I64Const { value: 1 }
+        4	+ I64Eq
         	! >>6
-        5	* BrIf { relative_depth: 1 }
+        5	- BrIf { relative_depth: 1 }
         	! >>1
         6	~ Br { relative_depth: 0 }
         	! >>1
         7	~ End
         8	  I32Const { value: 0 }
         	! >>2
-        9	* Return
+        9	- Return
         	! >>1
         10	~ End
         11	  I32Const { value: 1 }
         	! >>2
-        12	* Return
+        12	- Return
         	! >>1
         13	  End
 
-function #1 (14 instructions in slice):
+function #1 (11 instructions in slice):
     the params taint:
      *0,
     the local.get instrs influencing CF:
      *3, *7,
     the function slice:
-        0	* Block { blockty: Empty }
-        1	* Block { blockty: Empty }
-        2	* Block { blockty: Empty }
-        3	* LocalGet { local_index: 0 }
-        4	* I32Const { value: 0 }
-        5	* I32Eq
+        0	~ Block { blockty: Empty }
+        1	~ Block { blockty: Empty }
+        2	~ Block { blockty: Empty }
+        3	+ LocalGet { local_index: 0 }
+        4	+ I32Const { value: 0 }
+        5	+ I32Eq
         	! >>7
-        6	* BrIf { relative_depth: 0 }
-        7	* LocalGet { local_index: 0 }
-        8	* I32Const { value: 2 }
-        9	* I32GtU
+        6	- BrIf { relative_depth: 0 }
+        7	+ LocalGet { local_index: 0 }
+        8	+ I32Const { value: 2 }
+        9	+ I32GtU
         	! >>4
-        10	* BrIf { relative_depth: 2 }
+        10	- BrIf { relative_depth: 2 }
         	! >>1
         11	~ Br { relative_depth: 1 }
         	! >>1
         12	~ End
         13	  I32Const { value: 1 }
         	! >>2
-        14	* Return
+        14	- Return
         	! >>1
         15	~ End
         16	  I32Const { value: 0 }
         	! >>2
-        17	* Return
+        17	- Return
         	! >>1
         18	~ End
         19	  I32Const { value: 2 }
         	! >>2
-        20	* Return
+        20	- Return
         	! >>1
         21	  End
 
-function #2 (7 instructions in slice):
+function #2 (4 instructions in slice):
     the params taint:
      *0,
     the local.get instrs influencing CF:
      *3,
     the function slice:
-        0	* Block { blockty: Empty }
-        1	* Block { blockty: Empty }
-        2	* Block { blockty: Empty }
-        3	* LocalGet { local_index: 0 }
+        0	~ Block { blockty: Empty }
+        1	~ Block { blockty: Empty }
+        2	~ Block { blockty: Empty }
+        3	+ LocalGet { local_index: 0 }
         	! >>5
-        4	* BrTable { targets: BrTable { count: 3, default: 2, targets: [0, 1, 2] } }
+        4	- BrTable { targets: BrTable { count: 3, default: 2, targets: [0, 1, 2] } }
         	! >>1
         5	~ End
         6	  I32Const { value: 0 }
         	! >>2
-        7	* Return
+        7	- Return
         	! >>1
         8	~ End
         9	  I32Const { value: 1 }
         	! >>2
-        10	* Return
+        10	- Return
         	! >>1
         11	~ End
         12	  I32Const { value: 2 }
@@ -102,19 +102,19 @@ function #3 (6 instructions in slice):
     the local.get instrs influencing CF:
      *0,
     the function slice:
-        0	* LocalGet { local_index: 0 }
-        1	* I32Const { value: 1 }
-        2	* I32Eq
+        0	+ LocalGet { local_index: 0 }
+        1	+ I32Const { value: 1 }
+        2	+ I32Eq
         	! >>4
-        3	* If { blockty: Empty }
+        3	- If { blockty: Empty }
         4	  I32Const { value: 1 }
         	! >>2
-        5	* Return
+        5	- Return
         	! >>1
         6	~ Else
         7	  I32Const { value: 0 }
         	! >>2
-        8	* Return
+        8	- Return
         	! >>1
         9	~ End
         10	  I32Const { value: 0 }
@@ -131,9 +131,9 @@ function #4 (0 instructions in slice):
         	! >>6
         5	  End
 
-function #5 (1 instructions in slice):
+function #5 (0 instructions in slice):
     the function slice:
-        0	* Block { blockty: Empty }
+        0	  Block { blockty: Empty }
         1	  I64Const { value: 0 }
         2	  Call { function_index: 0 }
         3	  GlobalSet { global_index: 0 }
@@ -172,9 +172,8 @@ function #5 (1 instructions in slice):
         36	  I32Const { value: 0 }
         37	  Call { function_index: 4 }
         38	  Drop
-        	! >>40
-        39	~ End
-        	! >>1
+        39	  End
+        	! >>41
         40	  End
 
 function #6 (0 instructions in slice):
@@ -183,9 +182,9 @@ function #6 (0 instructions in slice):
         	! >>2
         1	  End
 
-=====================
-==== FID MAPPING ====
-=====================
+===========================
+==== FID MAPPING (max) ====
+===========================
 0 -> 0:exact0
     ---- Requested LOCAL.GET (for a param):
     2 is @param0
@@ -207,7 +206,36 @@ function #6 (0 instructions in slice):
 5 -> 5:exact5
 6 -> 6:exact6
 
+===========================
+==== FID MAPPING (min) ====
+===========================
+0 -> 0:exact0
+    ---- Requested TAKEN (for a branch):
+    5 is @param0
+
+1 -> 1:exact1
+    ---- Requested TAKEN (for a branch):
+    6 is @param0
+    10 is @param1
+
+2 -> 2:exact2
+    ---- Requested TAKEN (for a branch):
+    4 is @param0
+
+3 -> 3:exact3
+    ---- Requested TAKEN (for a branch):
+    3 is @param0
+
+4 -> 4:exact4
+5 -> 5:exact5
+6 -> 6:exact6
+
 ====================
 ==== FLUSH WASM ====
 ====================
-Wrote generated Wasm to output/tests/params.wasm
+Wrote generated Wasm to output/tests/params-max.wasm
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/params-min.wasm

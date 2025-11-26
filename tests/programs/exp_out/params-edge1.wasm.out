@@ -8,19 +8,19 @@ function #0 (0 instructions in slice):
         	! >>3
         2	  End
 
-function #1 (3 instructions in slice):
+function #1 (2 instructions in slice):
     the params taint:
      *0,
     the local.get instrs influencing CF:
      *4,
     the function slice:
-        0	* Block { blockty: Empty }
+        0	~ Block { blockty: Empty }
         1	  LocalGet { local_index: 0 }
         2	  Call { function_index: 0 }
         3	  LocalSet { local_index: 0 }
-        4	* LocalGet { local_index: 0 }
+        4	+ LocalGet { local_index: 0 }
         	! >>6
-        5	* BrIf { relative_depth: 0 }
+        5	- BrIf { relative_depth: 0 }
         6	  Nop
         7	  Nop
         8	  Nop
@@ -36,9 +36,9 @@ function #2 (0 instructions in slice):
         	! >>3
         2	  End
 
-=====================
-==== FID MAPPING ====
-=====================
+===========================
+==== FID MAPPING (max) ====
+===========================
 0 -> 0:exact0
 1 -> 1:exact1
     ---- Requested LOCAL.GET (for a param):
@@ -46,7 +46,22 @@ function #2 (0 instructions in slice):
 
 2 -> 2:exact2
 
+===========================
+==== FID MAPPING (min) ====
+===========================
+0 -> 0:exact0
+1 -> 1:exact1
+    ---- Requested TAKEN (for a branch):
+    5 is @param0
+
+2 -> 2:exact2
+
 ====================
 ==== FLUSH WASM ====
 ====================
-Wrote generated Wasm to output/tests/params-edge1.wasm
+Wrote generated Wasm to output/tests/params-edge1-max.wasm
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/params-edge1-min.wasm

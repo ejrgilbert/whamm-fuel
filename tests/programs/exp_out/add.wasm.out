@@ -14,13 +14,24 @@ function #1 (0 instructions in slice):
         	! >>4
         3	  End
 
-=====================
-==== FID MAPPING ====
-=====================
+===========================
+==== FID MAPPING (max) ====
+===========================
+0 -> 0:exact0
+1 -> 1:exact1
+
+===========================
+==== FID MAPPING (min) ====
+===========================
 0 -> 0:exact0
 1 -> 1:exact1
 
 ====================
 ==== FLUSH WASM ====
 ====================
-Wrote generated Wasm to output/tests/add.wasm
+Wrote generated Wasm to output/tests/add-max.wasm
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/add-min.wasm

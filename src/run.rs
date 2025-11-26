@@ -60,16 +60,19 @@ pub fn do_analysis<W: WriteColor>(mut out: W, wasm_bytes: &[u8], out_max_path: &
 
     // MAX: generate code for the slices (leave placeholders for the cost calculation)
     let mut gen_wasm_max = Module::default();
-    let CodeGenResult { cost_maps: cost_maps_max, func_map: func_map_min } = codegen_max(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm_max);
+    let CodeGenResult { cost_maps, func_map: func_map_max } = codegen_max(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm_max);
 
     // MIN: generate code for the slices (leave placeholders for the cost calculation)
-    // TODO: Fix the types
     let mut gen_wasm_min = Module::default();
-    let CodeGenResult { cost_maps, func_map } = codegen_min(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm_min);
+    let CodeGenResult { func_map: func_map_min, .. } = codegen_min(&FUEL_COMPUTATION, &mut slices, &func_taints, &wasm, &mut gen_wasm_min);
 
     // Flush state
-    flush_slices(&mut out, wasm.globals.len(), &slices, &func_taints, &cost_maps_max, &wasm)?;
-    flush_fid_mapping(&mut out, &func_map_min)?;
+    // cost maps are the same between max/min
+    flush_slices(&mut out, wasm.globals.len(), &slices, &func_taints, &cost_maps, &wasm)?;
+
+    flush_fid_mapping(&mut out, "max", &func_map_max)?;
+    writeln!(out)?;
+    flush_fid_mapping(&mut out, "min", &func_map_min)?;
 
     // Write the generated wasm to the output file
     write_bytes(&mut out, &gen_wasm_max.encode(), out_max_path)?;
@@ -104,10 +107,10 @@ pub(crate) fn try_path(path: &String) {
 // = Terminal Printing Logic =
 // ===========================
 
-fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<GeneratedFunc>>) -> io::Result<()> {
-    writeln!(out, "=====================")?;
-    writeln!(out, "==== FID MAPPING ====")?;
-    writeln!(out, "=====================")?;
+fn flush_fid_mapping<W: WriteColor>(mut out: W, sty: &str, fid_map: &HashMap<u32, Vec<GeneratedFunc>>) -> io::Result<()> {
+    writeln!(out, "===========================")?;
+    writeln!(out, "==== FID MAPPING ({sty}) ====")?;
+    writeln!(out, "===========================")?;
     let mut sorted: Vec<&u32> = fid_map.keys().collect();
     sorted.sort();
     for fid in sorted.iter() {
@@ -126,6 +129,7 @@ fn flush_fid_mapping<W: WriteColor>(mut out: W, fid_map: &HashMap<u32, Vec<Gener
             print_params_for_state_req(&mut out, tabs, "LOADS", req_state.get(&StateType::Load).unwrap())?;
             print_call_params_for_state_req(&mut out, tabs, "CALLS", req_state.get(&StateType::Call).unwrap())?;
             print_call_params_for_state_req(&mut out, tabs, "CALL_INDIRECTS", req_state.get(&StateType::CallIndirect).unwrap())?;
+            print_params_for_state_req(&mut out, tabs, "TAKEN (for a branch)", req_state.get(&StateType::Taken).unwrap())?;
 
             writeln!(out, )?;
         }
@@ -205,7 +209,7 @@ fn flush_slices<W: WriteColor>(mut out: W, num_globals: usize, slices: &Vec<Slic
                     print_cost(&mut out, &s);
                 }
 
-                let mark = if in_min_slice { "*" } else if in_max_slice { "+" } else if in_support { "~" } else { " " };
+                let mark = if in_min_slice { "-" } else if in_max_slice { "+" } else if in_support { "~" } else { " " };
                 let s = format!("{}{}\t{} {:?}\n", tab(tabs), i, mark, body.get_ops().get(i).unwrap());
                 if in_min_slice {
                     print_min(&mut out, &s);

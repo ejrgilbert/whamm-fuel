@@ -7,33 +7,47 @@ function #0 (0 instructions in slice):
         	! >>2
         1	  End
 
-function #1 (4 instructions in slice):
+function #1 (3 instructions in slice):
     the calls instrs influencing CF:
      *(@1, res0),
     the function slice:
-        0	* Block { blockty: Empty }
-        1	* Call { function_index: 0 }
+        0	~ Block { blockty: Empty }
+        1	+ Call { function_index: 0 }
         	! >>3
-        2	* BrIf { relative_depth: 0 }
+        2	- BrIf { relative_depth: 0 }
         3	  I32Const { value: 3 }
         	! >>2
-        4	* Return
+        4	- Return
         	! >>1
         5	~ End
         6	  I32Const { value: 4 }
         	! >>2
         7	  End
 
-=====================
-==== FID MAPPING ====
-=====================
+===========================
+==== FID MAPPING (max) ====
+===========================
 0 -> 0:exact0
 1 -> 1:exact1
     ---- Requested CALLS:
-    1,arg0 is @param0
+    1: res0@param0
+
+
+===========================
+==== FID MAPPING (min) ====
+===========================
+0 -> 0:exact0
+1 -> 1:exact1
+    ---- Requested TAKEN (for a branch):
+    2 is @param0
 
 
 ====================
 ==== FLUSH WASM ====
 ====================
-Wrote generated Wasm to output/tests/calls.wasm
+Wrote generated Wasm to output/tests/calls-max.wasm
+
+====================
+==== FLUSH WASM ====
+====================
+Wrote generated Wasm to output/tests/calls-min.wasm

@@ -12,9 +12,9 @@ pub(crate) fn reduce_slice(slices: &mut [SliceResult], funcs: &[FuncState], wasm
             let body = &lf.body.instructions;
 
             for (i, op) in body.get_ops().iter().enumerate() {
-                let in_slice = slice.max_slice.contains(&i) || slice.instrs_support.contains(&i);
-                let (in_min_slice, need_taken) = visit_op(op, in_slice);
-                if in_min_slice {
+                let in_support = slice.instrs_support.contains(&i);
+                let (in_min_slice, need_taken) = visit_op(op);
+                if in_min_slice && !in_support {
                     slice.min_slice.insert(i);
                 }
                 if let Some(dt) = need_taken {
@@ -30,14 +30,14 @@ pub(crate) fn reduce_slice(slices: &mut [SliceResult], funcs: &[FuncState], wasm
 /// - do_fuel_before: whether we should compute the fuel implications at this location
 ///   (before emitting this opcode).
 /// Returns (in_min_slice, need_taken)
-fn visit_op(op: &Operator, is_in_slice: bool) -> (bool, Option<DataType>) {
+fn visit_op(op: &Operator) -> (bool, Option<DataType>) {
     // If this opcode is in the slice && it's a branching opcode, I want to know if the branch was taken
-    let in_min_slice = is_in_slice && (is_branching_op(op) || matches!(op, Operator::If {..} | Operator::Return));
-    let need_taken = if in_min_slice && is_branching_op(op) || matches!(op, Operator::If {..}) {
+    let in_min_slice = is_branching_op(op) || matches!(op, Operator::If {..} | Operator::Return);
+    let need_taken = if in_min_slice && is_branching_op(op) && !matches!(op, Operator::Br {..}) || matches!(op, Operator::If {..}) {
         Some(DataType::I32)
     } else {
         None
     };
-        
+
     (in_min_slice, need_taken)
 }

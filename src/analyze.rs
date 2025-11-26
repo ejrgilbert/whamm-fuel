@@ -309,17 +309,17 @@ pub fn analyze(wasm: &mut Module) -> Vec<FuncState> {
             }
 
             Operator::If { .. } | Operator::Block { .. } | Operator::Loop { .. } => {
-                let inputs = if matches!(op, Operator::If { .. }) {
+                let (inputs, kind) = if matches!(op, Operator::If { .. }) {
                     // pops condition
                     let cond = state.stack.pop().unwrap();
-                    vec![cond]
+                    (vec![cond], OpKind::Control)
                 } else {
-                    vec![]
+                    (vec![], OpKind::Other)
                 };
                 let (_, num_results) = stack_effects(op, mi.module);
                 state.push_control(num_results);
                 state.instrs.push(InstrInfo {
-                    kind: OpKind::Control,
+                    kind,
                     inputs
                 });
             }

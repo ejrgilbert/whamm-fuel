@@ -6,7 +6,7 @@ mod utils;
 
 #[test]
 fn test_add() {
-    let mut test = Test::new("add.wasm");
+    let mut test = Test::new("add");
     test.add_base_case(
         0,
         Exp::new_exact(1, 1)
@@ -21,7 +21,7 @@ fn test_add() {
 
 #[test]
 fn test_calls() {
-    let mut test = Test::new("calls.wasm");
+    let mut test = Test::new("calls");
     test.add_base_case(
         0,
         Exp::new_exact(2, 2)
@@ -36,7 +36,7 @@ fn test_calls() {
 #[test]
 fn test_globals() {
     // TODO -- add tests to exercise the loop subsections!
-    let mut test = Test::new("globals.wasm");
+    let mut test = Test::new("globals");
     test.add_case_with_loops(
         0,
         Exp::new_exact(4, 4),
@@ -46,7 +46,7 @@ fn test_globals() {
 }
 #[test]
 fn test_loads() {
-    let mut test = Test::new("loads.wasm");
+    let mut test = Test::new("loads");
     test.add_base_case(
         0,
         Exp::new_exact(6, 6)
@@ -57,7 +57,7 @@ fn test_loads() {
 // TODO -- get this test case passing!
 #[test]
 fn test_malloc_init() {
-    let mut test = Test::new("malloc_init.wasm");
+    let mut test = Test::new("malloc_init");
     test.add_base_case(
         0,
         Exp::new_exact(2, 2)
@@ -72,7 +72,7 @@ fn test_malloc_init() {
 
 #[test]
 fn test_mem_ops() {
-    let mut test = Test::new("mem-ops.wasm");
+    let mut test = Test::new("mem-ops");
     test.add_base_case(
         0,
         Exp::new_exact(8, 8)
@@ -87,7 +87,7 @@ fn test_mem_ops() {
 
 #[test]
 fn test_mem_ops2() {
-    let mut test = Test::new("mem-ops2.wasm");
+    let mut test = Test::new("mem-ops2");
     test.add_base_case(
         0,
         Exp::new_exact(8, 8)
@@ -97,7 +97,11 @@ fn test_mem_ops2() {
 }
 #[test]
 fn test_params() {
-    let mut test = Test::new("params.wasm");
+    // TODO -- fix how i express test cases for min/max exercising
+    //         when you pass (1,1) to max the branch isn't necessarily taken
+    //         when you pass (1,1) to min it means the branch IS taken
+
+    let mut test = Test::new("params");
     test.add_base_case(
         0,
         Exp::new_exact(8, 9)
@@ -131,7 +135,7 @@ fn test_params() {
 
 #[test]
 fn test_params_edge1() {
-    let mut test = Test::new("params-edge1.wasm");
+    let mut test = Test::new("params-edge1");
     test.add_base_case(
         0,
         Exp::new_exact(3, 3)

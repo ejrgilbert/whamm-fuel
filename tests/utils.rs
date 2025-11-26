@@ -77,24 +77,40 @@ pub fn run_test(test_case: Test) {
 }
 
 fn run_test_internal(test: &Test) -> anyhow::Result<()> {
-    let in_path = format!("{BASE_IN}{}", test.name);
-    let out_path = format!("{BASE_OUT}{}", test.name);
-    let exp_path = format!("{BASE_EXP}/{}.out", test.name);
+    let in_path = format!("{BASE_IN}{}.wasm", test.name);
+    let out_max_path = format!("{BASE_OUT}{}-max.wasm", test.name);
+    let out_min_path = format!("{BASE_OUT}{}-min.wasm", test.name);
+    let exp_path = format!("{BASE_EXP}/{}.wasm.out", test.name);
     let bytes = fs::read(in_path)?;
 
     let mut buf = TestBuffer { buf: Vec::new() };
-    do_analysis(&mut buf, &bytes, &out_path)?;
+    do_analysis(&mut buf, &bytes, &out_max_path, &out_min_path)?;
 
     // 0. Check the expected output information.
+    println!("[test] Is output as expected?");
     let exp_output = fs::read_to_string(exp_path)?;
     let output = String::from_utf8(buf.buf)?;
     assert_eq!(output.trim(), exp_output.trim());
 
     // 1. Is the output wasm file VALID?
+    println!("[test] Is it valid?");
     let engine = Engine::default();
-    let wasm = test_validity(&engine, &out_path)?;
+    let wasm_max = test_validity(&engine, &out_max_path)?;
+    let wasm_min = test_validity(&engine, &out_min_path)?;
 
     // 2. Run the module, does it run as expected?
+    println!("[test] Does it run correctly?");
+    run_wasm("max", test, &engine, wasm_max)?;
+    run_wasm("min", test, &engine, wasm_min)?;
+
+    Ok(())
+}
+
+fn test_validity(engine: &Engine, path: &str) -> anyhow::Result<Module> {
+    Ok(Module::from_file(engine, path)?)
+}
+
+fn run_wasm(reduction: &str, test: &Test, engine: &Engine, wasm: Module) -> anyhow::Result<()> {
     let mut checked_loops_per_func: HashMap<u32, usize> = HashMap::default();
     for export in wasm.exports() {
         if let ExternType::Func(func_ty) = export.ty() {
@@ -109,8 +125,8 @@ fn run_test_internal(test: &Test) -> anyhow::Result<()> {
                 } else {
                     &test_case.base
                 };
-                test_run(name, "on_true", *base_true, gen_true, &func_ty, &engine, &wasm)?;
-                test_run(name, "on_false", *base_false, gen_false, &func_ty, &engine, &wasm)?;
+                test_run(name, &format!("{reduction}-on_true"), *base_true, gen_true, &func_ty, &engine, &wasm)?;
+                test_run(name, &format!("{reduction}-on_false"), *base_false, gen_false, &func_ty, &engine, &wasm)?;
             }
         }
     }
@@ -122,12 +138,7 @@ fn run_test_internal(test: &Test) -> anyhow::Result<()> {
             assert_eq!(exp_count, *checked_loops_per_func.get(&fid).unwrap());
         }
     }
-
     Ok(())
-}
-
-fn test_validity(engine: &Engine, path: &str) -> anyhow::Result<Module> {
-    Ok(Module::from_file(engine, path)?)
 }
 
 fn test_run(func_name: &str, case_name: &str, exp_fuel: i64, gen_val: fn(ValType) -> Val, func_ty: &FuncType, engine: &Engine, wasm: &Module) -> anyhow::Result<()> {

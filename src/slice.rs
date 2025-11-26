@@ -296,7 +296,13 @@ pub fn save_structure(slices: &mut [SliceResult], funcs: &[FuncState], wasm: &Mo
             for (i, op) in body.get_ops().iter().enumerate() {
                 let in_slice = slice.max_slice.contains(&i);
                 let support_ops = visit_op(op, i, i == body.len() - 1, in_slice, &mut state);
-                slice.instrs_support.extend(support_ops);
+                let mut to_add: HashSet<usize> = HashSet::default();
+                for instr in support_ops {
+                    if !slice.max_slice.contains(&instr) {
+                        to_add.insert(instr);
+                    }
+                }
+                slice.instrs_support.extend(to_add);
             }
         }
     }
