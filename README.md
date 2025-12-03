@@ -5,10 +5,7 @@ This is a repository containing currently in-flux code as we work toward buildin
 
 # TODO List #
 
-- [ ] Analyze the maximal program slice to reduce to a minimal program slice
-      - This would just request the inputs to any branching opcodes (if they're dependent on a parameter)
 - [ ] Write the Whamm script
-- [ ] Add more tests! (maybe just assert they're valid for now?)
 - [ ] Get working e2e (with whamm instrumentation)
       - Should codegen a whamm script (do we need new language features?)
       - Should it return the fuel cost? Decrement handled in `whamm` (gets reported automatically)

@@ -108,10 +108,6 @@ fn test_mem_ops2() {
 }
 #[test]
 fn test_params() {
-    // TODO -- fix how i express test cases for min/max exercising
-    //         when you pass (1,1) to max the branch isn't necessarily taken
-    //         when you pass (1,1) to min it means the branch IS taken
-
     let mut test = Test::new("params");
     test.add_base_case(
         0,
