@@ -6,6 +6,7 @@ This is a repository containing currently in-flux code as we work toward buildin
 # TODO List #
 
 - [ ] Write the Whamm script
+      - list of things to support in `stitching.mm`
 - [ ] Get working e2e (with whamm instrumentation)
       - Should codegen a whamm script (do we need new language features?)
       - Should it return the fuel cost? Decrement handled in `whamm` (gets reported automatically)

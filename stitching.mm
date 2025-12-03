@@ -1,5 +1,18 @@
 // TODO -- check if Ben agrees with this idea and actually get this working in Whamm.
 
+// TODO, new things to support:
+// - fix how i pass strings to libraries
+// - strings all the way
+// - call function in global space
+// - declare/set variable in global space
+// - set variable in global space
+// new events:
+// - wasm:loop:back_edge
+// new bound func/var:
+// - prog_path
+// - frame_vars (.push, .popi)
+// - libcall()
+
 // program.instr.wasm -> <async> / <memoization> -> slice
 //  - bundling
 //  - var cost = slice(arg...)
@@ -15,7 +28,7 @@ use whamm_fuel;
 use fuel;
 
 whamm_fuel.analyze(prog_path);
-var gen_fuel_path: string = whamm_fuel.slice_min_path();
+var gen_fuel_path: string = whamm_fuel.gen_slice_min_path();
 
 // Here’s an idea I have after our convo for how to write the whamm script. It’d include a new bound variable frame_vars that allows you to bundle state at different function locations.
 // Then there’s a new bound function call that compiles to a Wasm call targeting the specified function and passing the specified vars (popped from the frame_vars stack):
@@ -32,9 +45,9 @@ wasm:loop:back_edge / whamm_fuel.instrument_here(fid, startidx) / {
     // Get the number of parameters that the current loop's slice function takes
     var num_params: i32 = whamm_fuel.slice_params_loop(fid, startidx);
     
-    // `call(target_lib, target_func, args)`: bound function that invokes the
+    // `libcall(target_lib, target_func, args)`: bound function that invokes the
     // specified library function with the passed vector of arguments
-    var cost: i64 = call(gen_fuel_path, lib_func, frame_vars.popi(num_params)); // `popi` pops and returns a vector of the passed size
+    var cost: i64 = libcall(gen_fuel_path, lib_func, frame_vars.popi(num_params)); // `popi` pops and returns a vector of the passed size
     fuel.consume(cost);
 }
 wasm:func:exit {
@@ -43,6 +56,6 @@ wasm:func:exit {
     // Get the number of parameters that the current function's slice function takes
     var num_params: i32 = whamm_fuel.slice_params(fid);
     
-    var cost: i64 = call(gen_fuel_path, lib_func, frame_vars.popi(num_params));
+    var cost: i64 = libcall(gen_fuel_path, lib_func, frame_vars.popi(num_params));
     fuel.consume(cost);
 }
