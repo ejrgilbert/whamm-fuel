@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io::Write;
 use termcolor::{ColorSpec, WriteColor};
@@ -12,10 +13,24 @@ const BASE_IN: &str = "tests/programs/";
 const BASE_OUT: &str = "output/tests/";
 const BASE_EXP: &str = "tests/programs/exp_out";
 
+type FID = u32;
+enum SliceType {
+    Max,
+    Min
+}
+impl Display for SliceType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SliceType::Max => write!(f, "max"),
+            SliceType::Min => write!(f, "min"),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Test {
     name: &'static str,
-    expected: HashMap<u32, TestCase>
+    expected: HashMap<FID, TestCase>
 }
 impl Test {
     pub(crate) fn new(name: &'static str
@@ -25,11 +40,24 @@ impl Test {
             ..Default::default()
         }
     }
-    pub(crate) fn add_base_case(&mut self, fid: u32, base: Exp) {
-        self.expected.insert(fid, TestCase::new(base, HashMap::default()));
+    pub(crate) fn add_base_case(&mut self, fid: FID, base_max: Exp, base_min: Exp) {
+        self.expected.insert(fid, TestCase::new(Expected::new(
+            base_max,
+            HashMap::default()
+        ), Expected::new(
+            base_min,
+            HashMap::default()
+        )));
     }
-    pub(crate) fn add_case_with_loops(&mut self, fid: u32, base: Exp, loops: Vec<(LoopIdx, Exp)>) {
-        self.expected.insert(fid, TestCase::new(base, loops.into_iter().collect()));
+    pub(crate) fn add_case_with_loops(&mut self, fid: FID, base_max: Exp, loops_max: Vec<(LoopIdx, Exp)>,
+                                      base_min: Exp, loops_min: Vec<(LoopIdx, Exp)>) {
+        self.expected.insert(fid, TestCase::new(Expected::new(
+            base_max,
+            loops_max.into_iter().collect()
+        ), Expected::new(
+            base_min,
+            loops_min.into_iter().collect()
+        )));
     }
 }
 
@@ -57,13 +85,24 @@ impl Exp {
         Self { exact_on_true, exact_on_false, approx_on_true, approx_on_false }
     }
 }
-struct TestCase {
+
+struct Expected {
     base: Exp,
     loops: HashMap<LoopIdx, Exp>
 }
-impl TestCase {
-    pub(crate) fn new(base: Exp, loops: HashMap<LoopIdx, Exp>) -> Self {
+impl Expected {
+    fn new(base: Exp, loops: HashMap<LoopIdx, Exp>) -> Self {
         Self { base, loops }
+    }
+}
+
+struct TestCase {
+    for_max: Expected,
+    for_min: Expected
+}
+impl TestCase {
+    pub(crate) fn new(for_max: Expected, for_min: Expected) -> Self {
+        Self { for_max, for_min }
     }
     // fn get_loop_exp(&self, idx: LoopIdx) -> &Exp {
     //     self.loops.get(&idx).unwrap()
@@ -100,8 +139,8 @@ fn run_test_internal(test: &Test) -> anyhow::Result<()> {
 
     // 2. Run the module, does it run as expected?
     println!("[test] Does it run correctly?");
-    run_wasm("max", test, &engine, wasm_max)?;
-    run_wasm("min", test, &engine, wasm_min)?;
+    run_wasm(SliceType::Max, test, &engine, wasm_max)?;
+    run_wasm(SliceType::Min, test, &engine, wasm_min)?;
 
     Ok(())
 }
@@ -110,7 +149,7 @@ fn test_validity(engine: &Engine, path: &str) -> anyhow::Result<Module> {
     Ok(Module::from_file(engine, path)?)
 }
 
-fn run_wasm(reduction: &str, test: &Test, engine: &Engine, wasm: Module) -> anyhow::Result<()> {
+fn run_wasm(slice_ty: SliceType, test: &Test, engine: &Engine, wasm: Module) -> anyhow::Result<()> {
     let mut checked_loops_per_func: HashMap<u32, usize> = HashMap::default();
     for export in wasm.exports() {
         if let ExternType::Func(func_ty) = export.ty() {
@@ -121,21 +160,30 @@ fn run_wasm(reduction: &str, test: &Test, engine: &Engine, wasm: Module) -> anyh
                     checked_loops_per_func.entry(fid).and_modify(|loops| {
                         *loops += 1;
                     }).or_insert(1);
-                    &test_case.loops[&loop_idx]
+                    match slice_ty {
+                        SliceType::Max => &test_case.for_max.loops[&loop_idx],
+                        SliceType::Min => &test_case.for_min.loops[&loop_idx]
+                    }
+
                 } else {
-                    &test_case.base
+                    match slice_ty {
+                        SliceType::Max => &test_case.for_max.base,
+                        SliceType::Min => &test_case.for_min.base
+                    }
                 };
-                test_run(name, &format!("{reduction}-on_true"), *base_true, gen_true, &func_ty, &engine, &wasm)?;
-                test_run(name, &format!("{reduction}-on_false"), *base_false, gen_false, &func_ty, &engine, &wasm)?;
+                test_run(name, &format!("{slice_ty}-on_true"), *base_true, gen_true, &func_ty, &engine, &wasm)?;
+                test_run(name, &format!("{slice_ty}-on_false"), *base_false, gen_false, &func_ty, &engine, &wasm)?;
             }
         }
     }
 
     // check that we checked the expected number of generated loop slices.
     for (fid, case) in test.expected.iter() {
-        let exp_count = case.loops.len();
-        if exp_count > 0 {
-            assert_eq!(exp_count, *checked_loops_per_func.get(&fid).unwrap());
+        let exp_count_max = case.for_max.loops.len();
+        let exp_count_min = case.for_min.loops.len();
+        assert_eq!(exp_count_max, exp_count_max);
+        if exp_count_max > 0 {
+            assert_eq!(exp_count_max, *checked_loops_per_func.get(&fid).unwrap());
         }
     }
     Ok(())
