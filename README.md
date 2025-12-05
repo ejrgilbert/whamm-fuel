@@ -5,6 +5,7 @@ This is a repository containing currently in-flux code as we work toward buildin
 
 # TODO List #
 
+- [ ] Actually generate the maximal program slice! -- Right now it's just retaining the input to the br_if...
 - [ ] Write the Whamm script
       - list of things to support in `stitching.mm`
 - [ ] Get working e2e (with whamm instrumentation)

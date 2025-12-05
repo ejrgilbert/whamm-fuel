@@ -50,6 +50,7 @@ wasm:loop:back_edge / whamm_fuel.instrument_here(fid, startidx) / {
     var cost: i64 = libcall(gen_fuel_path, lib_func, frame_vars.popi(num_params)); // `popi` pops and returns a vector of the passed size
     fuel.consume(cost);
 }
+// AND loop fallthrough
 wasm:func:exit {
     // Get the name of the generated slice function for the current function
     var lib_func: string = whamm_fuel.slice_func(fid);

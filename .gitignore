@@ -1,3 +1,6 @@
+# Output from run
+output-*.wasm
+
 # IntelliJ configuration
 .idea/
 #vscode settings
